@@ -1,7 +1,7 @@
 import { BasePlatformAdapter } from '../base.js'
 import { randomDelay, sleep } from '../../core/human.js'
 import { cfg } from '../../core/config.js'
-import { PUBLISH_SELECTORS, INTERACT_SELECTORS } from './selectors.js'
+import { PUBLISH_SELECTORS, INTERACT_SELECTORS, BROWSE_SELECTORS } from './selectors.js'
 import path from 'path'
 
 /**
@@ -31,6 +31,7 @@ export class WeiboAdapter extends BasePlatformAdapter {
   getHomeUrl() { return 'https://weibo.com/' }
   getLoginUrl() { return 'https://weibo.com/login.php' }
   getInteractSelectors() { return INTERACT_SELECTORS }
+  getBrowsePostSelector() { return BROWSE_SELECTORS.feedItem }
 
   /**
    * 执行完整的发帖流程
@@ -42,25 +43,39 @@ export class WeiboAdapter extends BasePlatformAdapter {
     if (this._dryRun) this.log.info('[dryRun] 审核模式：填写内容后不点击发送按钮')
 
     try {
+      await this.showStatus('正在预热浏览...').catch(() => {})
+      await this.warmupBrowse()
+
+      await this.showStatus('正在打开发微博页面...').catch(() => {})
       await this.step1_openPublishPage()
+      await this.showStatus('正在输入内容...').catch(() => {})
       await this.step2_inputContent(post.content || post.title || '')
 
       if (post.images && post.images.length > 0) {
+        await this.showStatus('正在上传图片...').catch(() => {})
         await this.step3_uploadImages(post.images)
       }
 
+      await this.showStatus('正在发送微博...').catch(() => {})
       await this.step4_publish()
+      await this.showStatus('发布完成！').catch(() => {})
+      await this.hideStatus().catch(() => {})
 
       await this.fillRemainingTime()
+
+      if (!this._dryRun) {
+        this.log.info('[发布后] 返回首页浏览')
+        await this.navigateTo(this.getHomeUrl())
+      }
       await this.postPublishBrowse()
 
       this.log.info('========== 微博发帖成功 ==========')
-      return { success: true, message: '发布成功' }
+      return this.buildResult(true, '发布成功')
 
     } catch (err) {
       this.log.error(`微博发帖失败: ${err.message}`)
       await this.conditionalScreenshot('weibo_error', 'error')
-      return { success: false, message: err.message }
+      return this.buildResult(false, err)
     }
   }
 

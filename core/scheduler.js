@@ -21,7 +21,9 @@ function loadPosts(contentFile) {
 }
 
 function getNextPendingPost(posts, platform) {
-  return posts.find(p => p.status === 'pending' && p.platform === platform)
+  // 优先取 retry_pending（重试中的帖子），再取 pending（新帖子）
+  return posts.find(p => p.status === 'retry_pending' && p.platform === platform)
+      || posts.find(p => p.status === 'pending' && p.platform === platform)
 }
 
 function getPublishedPosts(posts, platform) {
@@ -105,6 +107,18 @@ async function executePublishTask(platform, contentFile) {
 
   if (lastError) {
     log.error(`[${platform}] 所有重试均失败: ${lastError}`)
+    // 所有重试用尽，标记为最终 failed
+    try {
+      const posts = loadPosts(contentFile)
+      const retryPost = posts.find(p => p.status === 'retry_pending' && p.platform === platform)
+      if (retryPost) {
+        await updatePost(contentFile, retryPost.id, {
+          status: 'failed',
+          failed_at: new Date().toISOString()
+        })
+        log.info(`[${platform}] 帖子 ${retryPost.id} 已标记为最终失败（重试 ${retryPost.attempt_count || 0} 次）`)
+      }
+    } catch { /* 状态更新失败不阻塞主流程 */ }
   }
 }
 
@@ -144,23 +158,42 @@ async function doPublish(platform, contentFile) {
     if (publishResult.success) {
       await updatePost(contentFile, post.id, {
         status: 'published',
-        published_at: new Date().toISOString()
+        published_at: new Date().toISOString(),
+        step_report: publishResult.step_report || null
       })
       log.info(`[${platform}] 发布成功: ${post.title}`)
       return 'success'
     } else {
+      // 失败时设为 retry_pending，保留重试机会
+      // executePublishTask 会在所有重试用尽后标记为 failed
       await updatePost(contentFile, post.id, {
-        status: 'failed',
-        error: publishResult.message,
-        failed_at: new Date().toISOString()
+        status: 'retry_pending',
+        attempt_count: (post.attempt_count || 0) + 1,
+        last_error: publishResult.message,
+        last_step: publishResult.step || null,
+        last_attempt_at: new Date().toISOString(),
+        step_report: publishResult.step_report || null
       })
-      log.error(`[${platform}] 发布失败: ${publishResult.message}`)
+      log.error(`[${platform}] 发布失败（将重试）: ${publishResult.message}`)
       return 'fail'
     }
 
   } catch (err) {
     log.error(`[${platform}] 发帖任务出错: ${err.message}`)
     log.error(err.stack)
+    // 异常时也要更新帖子状态，避免永久卡在 publishing
+    try {
+      const posts = loadPosts(contentFile)
+      const stuckPost = posts.find(p => p.status === 'publishing' && p.platform === platform)
+      if (stuckPost) {
+        await updatePost(contentFile, stuckPost.id, {
+          status: 'retry_pending',
+          attempt_count: (stuckPost.attempt_count || 0) + 1,
+          last_error: err.message,
+          last_attempt_at: new Date().toISOString()
+        })
+      }
+    } catch { /* 状态更新失败不阻塞主流程 */ }
     return err.message
   } finally {
     await closePageWithDelay(page)

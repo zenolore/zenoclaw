@@ -17,6 +17,13 @@ export const PUBLISH_SELECTORS = {
   // 发推按钮
   submitButton: "button[data-testid='tweetButton']",
 
+  // 首页发帖入口按钮（从首页点击进入编辑弹窗）
+  composeButton: 'a[data-testid="SideNav_NewTweet_Button"]',
+  composeButtonAlt: 'a[href="/compose/post"]',
+
+  // 编辑弹窗（用于检测弹窗是否已打开 / 发布后是否已消失）
+  composeDialog: '[data-testid="tweetTextarea_0"]',
+
   // 登录检测
   loginPageIndicator: '/i/flow/login',
 }

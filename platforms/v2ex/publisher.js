@@ -1,7 +1,7 @@
 import { BasePlatformAdapter } from '../base.js'
 import { randomDelay } from '../../core/human.js'
 import { cfg } from '../../core/config.js'
-import { PUBLISH_SELECTORS, INTERACT_SELECTORS } from './selectors.js'
+import { PUBLISH_SELECTORS, INTERACT_SELECTORS, BROWSE_SELECTORS } from './selectors.js'
 
 /**
  * V2EX 帖子发布适配器
@@ -28,6 +28,7 @@ export class V2exAdapter extends BasePlatformAdapter {
   getHomeUrl() { return 'https://www.v2ex.com/' }
   getLoginUrl() { return 'https://www.v2ex.com/signin' }
   getInteractSelectors() { return INTERACT_SELECTORS }
+  getBrowsePostSelector() { return BROWSE_SELECTORS.feedItem }
 
   async publish(post) {
     this.log.info('========== V2EX 发帖开始 ==========')
@@ -36,26 +37,41 @@ export class V2exAdapter extends BasePlatformAdapter {
     if (this._dryRun) this.log.info('[dryRun] 审核模式：填写内容后不点击提交按钮')
 
     try {
+      await this.showStatus('正在预热浏览...').catch(() => {})
+      await this.warmupBrowse()
+
+      await this.showStatus('正在打开发帖页面...').catch(() => {})
       await this.step1_openPage()
+      await this.showStatus('正在输入标题...').catch(() => {})
       await this.step2_inputTitle(post.title)
+      await this.showStatus('正在输入内容...').catch(() => {})
       await this.step3_inputContent(post.content)
 
       if (post.node) {
+        await this.showStatus('正在选择节点...').catch(() => {})
         await this.step4_selectNode(post.node)
       }
 
+      await this.showStatus('正在提交发布...').catch(() => {})
       await this.step5_submit()
+      await this.showStatus('发布完成！').catch(() => {})
+      await this.hideStatus().catch(() => {})
 
       await this.fillRemainingTime()
+
+      if (!this._dryRun) {
+        this.log.info('[发布后] 返回首页浏览')
+        await this.navigateTo(this.getHomeUrl())
+      }
       await this.postPublishBrowse()
 
       this.log.info('========== V2EX 发帖成功 ==========')
-      return { success: true, message: '发布成功' }
+      return this.buildResult(true, '发布成功')
 
     } catch (err) {
       this.log.error(`V2EX 发帖失败: ${err.message}`)
       await this.conditionalScreenshot('v2ex_error', 'error')
-      return { success: false, message: err.message }
+      return this.buildResult(false, err)
     }
   }
 

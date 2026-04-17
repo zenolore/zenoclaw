@@ -1,7 +1,7 @@
 import { BasePlatformAdapter } from '../base.js'
 import { randomDelay, sleep } from '../../core/human.js'
 import { cfg } from '../../core/config.js'
-import { PUBLISH_SELECTORS, INTERACT_SELECTORS } from './selectors.js'
+import { PUBLISH_SELECTORS, INTERACT_SELECTORS, BROWSE_SELECTORS } from './selectors.js'
 import path from 'path'
 
 /**
@@ -28,6 +28,7 @@ export class SspaiAdapter extends BasePlatformAdapter {
   getHomeUrl() { return 'https://sspai.com/' }
   getLoginUrl() { return 'https://sspai.com/login' }
   getInteractSelectors() { return INTERACT_SELECTORS }
+  getBrowsePostSelector() { return BROWSE_SELECTORS.feedItem }
 
   async publish(post) {
     this.log.info('========== 少数派发帖开始 ==========')
@@ -36,26 +37,33 @@ export class SspaiAdapter extends BasePlatformAdapter {
     if (this._dryRun) this.log.info('[dryRun] 审核模式：填写内容后不点击发布按钮')
 
     try {
-      await this.step1_openPage()
-      await this.step2_inputTitle(post.title)
-      await this.step3_inputContent(post.content)
+      await this.warmupBrowse()
+
+      await this.runStep('openPage', () => this.step1_openPage())
+      await this.runStep('inputTitle', () => this.step2_inputTitle(post.title))
+      await this.runStep('inputContent', () => this.step3_inputContent(post.content))
 
       if (post.images && post.images.length > 0) {
-        await this.step4_uploadCover(post.images[0])
+        await this.runStep('uploadCover', () => this.step4_uploadCover(post.images[0]))
       }
 
-      await this.step5_publish()
+      await this.runStep('publish', () => this.step5_publish())
 
       await this.fillRemainingTime()
+
+      if (!this._dryRun) {
+        this.log.info('[发布后] 返回首页浏览')
+        await this.navigateTo(this.getHomeUrl())
+      }
       await this.postPublishBrowse()
 
       this.log.info('========== 少数派发帖成功 ==========')
-      return { success: true, message: '发布成功' }
+      return this.buildResult(true, '发布成功')
 
     } catch (err) {
       this.log.error(`少数派发帖失败: ${err.message}`)
       await this.conditionalScreenshot('sspai_error', 'error')
-      return { success: false, message: err.message }
+      return this.buildResult(false, err)
     }
   }
 
@@ -123,12 +131,12 @@ export class SspaiAdapter extends BasePlatformAdapter {
     await randomDelay(reviewDelayMin, reviewDelayMax)
     await this.conditionalScreenshot('sspai_before_publish', 'before_publish')
 
-    // CSS + 文本匹配 fallback
+    // 第一步: 点击顶部「发布」按钮（打开发布通道选择弹窗）
     let clicked = false
     try {
       const el = await this.page.$(SELECTORS.publishButton)
       if (el) {
-        await el.click()
+        await this.clickElement(el)
         clicked = true
       }
     } catch { /* continue */ }
@@ -136,7 +144,7 @@ export class SspaiAdapter extends BasePlatformAdapter {
     if (!clicked) {
       const btn = await this.findByText('button', '发布')
       if (btn) {
-        await btn.click()
+        await this.clickElement(btn)
         clicked = true
       }
     }
@@ -145,7 +153,42 @@ export class SspaiAdapter extends BasePlatformAdapter {
       throw new Error('未找到发布按钮，页面结构可能已变更')
     }
 
-    this.log.info('已点击发布按钮')
+    this.log.info('已点击发布按钮，等待发布通道弹窗')
+    await randomDelay(1500, 3000)
+    await this.conditionalScreenshot('sspai_publish_modal', 'step')
+
+    // 第二步: 在弹窗中点击「立即发布」/ 「发布」确认
+    let confirmed = false
+    try {
+      // 尝试找「立即发布」按钮
+      const confirmBtn = await this.findByText('button', '立即发布')
+      if (confirmBtn) {
+        await this.clickElement(confirmBtn)
+        confirmed = true
+        this.log.info('已点击「立即发布」')
+      }
+    } catch { /* continue */ }
+
+    if (!confirmed) {
+      try {
+        // fallback: 弹窗内的「发布」按钮（可能是 dialog 内的 primary button）
+        const btns = await this.page.$$('button')
+        for (const btn of btns) {
+          const text = await btn.evaluate(el => el.textContent?.trim())
+          if (text === '发布' || text === '确认发布') {
+            await this.clickElement(btn)
+            confirmed = true
+            this.log.info(`已点击弹窗内「${text}」按钮`)
+            break
+          }
+        }
+      } catch { /* continue */ }
+    }
+
+    if (!confirmed) {
+      this.log.warn('未检测到发布通道弹窗，可能已直接发布')
+    }
+
     await randomDelay(waitAfterMin, waitAfterMax)
     await this.conditionalScreenshot('sspai_after_publish', 'after_publish')
   }

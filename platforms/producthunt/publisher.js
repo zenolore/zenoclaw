@@ -1,7 +1,7 @@
 import { BasePlatformAdapter } from '../base.js'
 import { randomDelay, sleep } from '../../core/human.js'
 import { cfg } from '../../core/config.js'
-import { PUBLISH_SELECTORS, INTERACT_SELECTORS } from './selectors.js'
+import { PUBLISH_SELECTORS, INTERACT_SELECTORS, BROWSE_SELECTORS } from './selectors.js'
 import path from 'path'
 
 /**
@@ -28,6 +28,7 @@ export class ProducthuntAdapter extends BasePlatformAdapter {
   getHomeUrl() { return 'https://www.producthunt.com/' }
   getLoginUrl() { return 'https://www.producthunt.com/login' }
   getInteractSelectors() { return INTERACT_SELECTORS }
+  getBrowsePostSelector() { return BROWSE_SELECTORS.feedItem }
 
   async publish(post) {
     this.log.info('========== Product Hunt 发布开始 ==========')
@@ -36,26 +37,41 @@ export class ProducthuntAdapter extends BasePlatformAdapter {
     if (this._dryRun) this.log.info('[dryRun] 审核模式：填写内容后不点击提交按钮')
 
     try {
+      await this.showStatus('Warming up...').catch(() => {})
+      await this.warmupBrowse()
+
+      await this.showStatus('Opening publish page...').catch(() => {})
       await this.step1_openPage()
+      await this.showStatus('正在输入标题...').catch(() => {})
       await this.step2_inputTitle(post.title)
+      await this.showStatus('正在输入内容...').catch(() => {})
       await this.step3_inputContent(post.content)
 
       if (post.images && post.images.length > 0) {
+        await this.showStatus('正在上传图片...').catch(() => {})
         await this.step4_uploadImage(post.images[0])
       }
 
+      await this.showStatus('正在提交发布...').catch(() => {})
       await this.step5_submit()
+      await this.showStatus('发布完成！').catch(() => {})
+      await this.hideStatus().catch(() => {})
 
       await this.fillRemainingTime()
+
+      if (!this._dryRun) {
+        this.log.info('[发布后] 返回首页浏览')
+        await this.navigateTo(this.getHomeUrl())
+      }
       await this.postPublishBrowse()
 
       this.log.info('========== Product Hunt 发布成功 ==========')
-      return { success: true, message: '发布成功' }
+      return this.buildResult(true, '发布成功')
 
     } catch (err) {
       this.log.error(`Product Hunt 发布失败: ${err.message}`)
       await this.conditionalScreenshot('ph_error', 'error')
-      return { success: false, message: err.message }
+      return this.buildResult(false, err)
     }
   }
 
@@ -81,26 +97,45 @@ export class ProducthuntAdapter extends BasePlatformAdapter {
 
   async step3_inputContent(content) {
     this.log.info('[步骤3] 输入描述')
-    const selector = await this.findSelector([
+    const el = await this.findElement([
       SELECTORS.contentInput,
       SELECTORS.contentInputAlt,
+      'input[name="tagline"]',
+      'input[placeholder*="tagline"]',
+      'input[placeholder*="description"]',
+      'div[contenteditable="true"]',
     ])
-    await this.click(selector)
+    if (!el) {
+      this.log.warn('未找到描述输入框，跳过')
+      return
+    }
+    await el.click()
     await randomDelay(500, 1000)
-    await this.type(selector, content)
+    // 使用 CDP insertText 兼容各种输入框类型
+    const cdp = await this.page.target().createCDPSession()
+    await cdp.send('Input.insertText', { text: content })
+    await cdp.detach()
     await this.actionPause()
     await this.browseForStep('input_content')
   }
 
   async step4_uploadImage(imagePath) {
     this.log.info('[步骤4] 上传图片')
-    const absolutePath = path.resolve(imagePath)
-    await this.uploadFile(SELECTORS.imageInput, [absolutePath])
+    try {
+      const absolutePath = path.resolve(imagePath)
+      await this.uploadFile(SELECTORS.imageInput, [absolutePath])
 
-    const pollInterval = cfg('upload.processing_poll_interval', 5000)
-    await sleep(pollInterval)
-    this.log.info('图片上传完成')
-    await this.browseForStep('upload_images')
+      const pollInterval = cfg('upload.processing_poll_interval', 5000)
+      await sleep(pollInterval)
+      this.log.info('图片上传完成')
+      await this.browseForStep('upload_images')
+    } catch (e) {
+      if (this._dryRun) {
+        this.log.warn(`[dryRun] 图片上传失败（跳过）: ${e.message}`)
+      } else {
+        throw e
+      }
+    }
   }
 
   async step5_submit() {

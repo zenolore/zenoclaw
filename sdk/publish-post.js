@@ -16,18 +16,16 @@
  *     [--port 9222]
  *
  * 输出 (stdout):
- *   成功: { "success": true, "message": "发布成功", "taskStatus": "completed" }
- *   审核: { "success": true, "message": "内容已填写，等待人工确认", "taskStatus": "review_required" }
+ *   成功: { "success": true, "message": "发布成功", "taskStatus": "completed", "publishedUrl": "https://..." }
+ *   审核: { "success": true, "message": "内容已填写，等待人工确认", "taskStatus": "review_required", "publishedUrl": null }
  *   失败: { "success": false, "message": "错误信息", "taskStatus": "failed" }
  *
  * 退出码: 0 成功/审核, 1 失败
  */
-import puppeteer from 'puppeteer-extra'
-import StealthPlugin from 'puppeteer-extra-plugin-stealth'
+import fs from 'node:fs'
+import puppeteer from 'puppeteer-core'
 import { loadAdapter } from '../platforms/loader.js'
 import { initConfig } from '../core/config.js'
-
-puppeteer.use(StealthPlugin())
 
 function parseArgs() {
   const args = process.argv.slice(2)
@@ -37,9 +35,26 @@ function parseArgs() {
     content: '',
     images: [],
     tags: [],
+    coverType: undefined,
+    enableAd: undefined,
+    declarations: [],
+    location: null,
+    declareFirstPublish: undefined,
+    autoRightsProtection: undefined,
+    collection: null,
+    publishWeiToutiao: undefined,
+    // 百家号特有
+    declareAiContent: undefined,
+    declareSource: undefined,
+    enableArticleToDynamic: undefined,
+    disablePodcast: undefined,
+    // 微信特有
+    author: null,
     mode: 'review',
     schedule: null,
-    port: 9222
+    port: 9222,
+    subreddit: null,
+    contentBlocksFile: null
   }
   for (let i = 0; i < args.length; i++) {
     switch (args[i]) {
@@ -48,9 +63,26 @@ function parseArgs() {
       case '--content':  result.content   = args[++i]; break
       case '--images':   result.images = (args[++i] || '').split(',').filter(Boolean); break
       case '--tags':     result.tags      = (args[++i] || '').split(',').filter(Boolean); break
+      case '--coverType': result.coverType = args[++i]; break
+      case '--enableAd': result.enableAd = args[++i] === 'true'; break
+      case '--declarations': result.declarations = (args[++i] || '').split(',').filter(Boolean); break
+      case '--location': result.location = args[++i]; break
+      case '--declareFirstPublish': result.declareFirstPublish = args[++i] === 'true'; break
+      case '--autoRightsProtection': result.autoRightsProtection = args[++i] === 'true'; break
+      case '--collection': result.collection = args[++i]; break
+      case '--publishWeiToutiao': result.publishWeiToutiao = args[++i] === 'true'; break
+      // 百家号特有
+      case '--declareAiContent': result.declareAiContent = args[++i] === 'true'; break
+      case '--declareSource': result.declareSource = args[++i] === 'true'; break
+      case '--enableArticleToDynamic': result.enableArticleToDynamic = args[++i] === 'true'; break
+      case '--disablePodcast': result.disablePodcast = args[++i] === 'true'; break
+      // 微信特有
+      case '--author': result.author = args[++i]; break
       case '--mode':     result.mode      = args[++i]; break
       case '--schedule': result.schedule  = args[++i]; break
       case '--port':     result.port      = parseInt(args[++i], 10); break
+      case '--subreddit': result.subreddit = args[++i]; break
+      case '--contentBlocksFile': result.contentBlocksFile = args[++i]; break
     }
   }
   return result
@@ -92,17 +124,18 @@ function initFastMode() {
       total_duration_max: 0,
       post_navigation_delay_min: 1000,
       post_navigation_delay_max: 2000,
+      warmup_browse_enabled: false,
     },
     tab: {
       post_publish_browse_min: 0,
       post_publish_browse_max: 0,
     },
     keyboard: {
-      delay_min: 30,
-      delay_max: 80,
-      pause_chance: 0,
+      delay_min: 50,
+      delay_max: 120,
+      pause_chance: 0.03,
       pre_type_delay_min: 200,
-      pre_type_delay_max: 400,
+      pre_type_delay_max: 500,
     },
     scroll: {
       times_min: 0,
@@ -110,7 +143,7 @@ function initFastMode() {
     },
     screenshot: {
       on_each_step: false,
-      on_error: false,
+      on_error: true,
       on_before_publish: false,
       on_after_publish: false,
     },
@@ -140,7 +173,8 @@ async function main() {
     output({ success: false, message: '缺少 --platform 参数', taskStatus: 'failed' })
     process.exit(1)
   }
-  if (!args.title) {
+  const noTitlePlatforms = ['x', 'twitter', 'jike']
+  if (!args.title && !noTitlePlatforms.includes(args.platform)) {
     output({ success: false, message: '缺少 --title 参数', taskStatus: 'failed' })
     process.exit(1)
   }
@@ -160,13 +194,42 @@ async function main() {
     const adapter = new AdapterClass(page)
     await adapter.init()
 
+    // 读取 contentBlocks（从临时 JSON 文件）
+    let contentBlocks = undefined
+    if (args.contentBlocksFile) {
+      try {
+        const raw = fs.readFileSync(args.contentBlocksFile, 'utf8')
+        contentBlocks = JSON.parse(raw)
+        console.log(`[publish-post] 加载 contentBlocks: ${contentBlocks.length} 块`)
+      } catch (e) {
+        console.warn(`[publish-post] contentBlocks 文件读取失败: ${e.message}`)
+      }
+    }
+
     post = {
       title:        args.title,
       content:      args.content,
+      contentBlocks,
       images:       args.images,
       tags:         args.tags,
+      coverType:    args.coverType,
+      enableAd:     args.enableAd,
+      declarations: args.declarations,
+      location:     args.location || undefined,
+      declareFirstPublish: args.declareFirstPublish,
+      autoRightsProtection: args.autoRightsProtection,
+      collection:   args.collection || undefined,
+      publishWeiToutiao: args.publishWeiToutiao,
+      // 百家号特有
+      declareAiContent: args.declareAiContent,
+      declareSource: args.declareSource,
+      enableArticleToDynamic: args.enableArticleToDynamic,
+      disablePodcast: args.disablePodcast,
+      // 微信特有
+      author:       args.author || undefined,
       scheduleTime: args.schedule || undefined,
-      dryRun:       args.mode !== 'publish'
+      dryRun:       args.mode !== 'publish',
+      subreddit:    args.subreddit || undefined
     }
 
     const result = await adapter.publish(post)

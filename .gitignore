@@ -28,9 +28,23 @@ CONFIG_API.md
 ZENOAGENT_ARCHITECTURE.md
 docs/APP_DEVELOPER_HANDOFF.md
 docs/GITHUB_API_MONITORING.md
+docs/*.png
 DEPLOY_GUIDE.md
 INTERNAL_TECH_DOC.md
 tests/
+
+# 临时/调试产物（不开源）
+midscene_run/
+temp-*.html
+temp-*.md
+test-output.txt
+test-zhihu-rank.mjs
+scripts/debug-*.mjs
+scripts/diag-*.mjs
+scripts/add-config-sections.mjs
+scripts/test-simple.mjs
+scripts/test-fullchain-cdp.mjs
+scripts/test-article-json-publish.mjs
 
 web/node_modules/
 web/dist/

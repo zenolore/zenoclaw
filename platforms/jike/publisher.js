@@ -43,25 +43,32 @@ export class JikeAdapter extends BasePlatformAdapter {
     if (this._dryRun) this.log.info('[dryRun] 审核模式：填写内容后不点击发送按钮')
 
     try {
-      await this.step1_openPage()
-      await this.step2_inputContent(post.content || post.title)
+      await this.warmupBrowse()
+
+      await this.runStep('openPage', () => this.step1_openPage())
+      await this.runStep('inputContent', () => this.step2_inputContent(post.content || post.title))
 
       if (post.images && post.images.length > 0) {
-        await this.step3_uploadImages(post.images)
+        await this.runStep('uploadImages', () => this.step3_uploadImages(post.images))
       }
 
-      await this.step4_submit()
+      await this.runStep('submit', () => this.step4_submit())
 
       await this.fillRemainingTime()
+
+      if (!this._dryRun) {
+        this.log.info('[发布后] 返回首页浏览')
+        await this.navigateTo(this.getHomeUrl())
+      }
       await this.postPublishBrowse()
 
       this.log.info('========== 即刻发帖成功 ==========')
-      return { success: true, message: '发布成功' }
+      return this.buildResult(true, '发布成功')
 
     } catch (err) {
       this.log.error(`即刻发帖失败: ${err.message}`)
       await this.conditionalScreenshot('jike_error', 'error')
-      return { success: false, message: err.message }
+      return this.buildResult(false, err)
     }
   }
 
@@ -91,10 +98,10 @@ export class JikeAdapter extends BasePlatformAdapter {
       SELECTORS.contentInputAlt,
     ])
 
-    // 即刻编辑器需要先点击激活
+    // 即刻编辑器需要先点击激活，用 paste 走 IME 模拟
     await this.click(selector)
     await randomDelay(500, 1000)
-    await this.type(selector, content)
+    await this.paste(selector, content)
     await this.actionPause()
     await this.conditionalScreenshot('jike_step2_content', 'step')
     await this.browseForStep('input_content')
@@ -131,12 +138,12 @@ export class JikeAdapter extends BasePlatformAdapter {
     await randomDelay(reviewDelayMin, reviewDelayMax)
     await this.conditionalScreenshot('jike_before_publish', 'before_publish')
 
-    // CSS 选择器 + 文本匹配 fallback
+    // CSS 选择器 + 文本匹配 fallback（全部走 ghost-cursor 点击）
     let clicked = false
     try {
       const el = await this.page.$(SELECTORS.submitButton)
       if (el) {
-        await el.click()
+        await this.clickElement(el)
         clicked = true
       }
     } catch { /* continue */ }
@@ -144,7 +151,7 @@ export class JikeAdapter extends BasePlatformAdapter {
     if (!clicked) {
       const btn = await this.findByText('button', '发送')
       if (btn) {
-        await btn.click()
+        await this.clickElement(btn)
         clicked = true
       }
     }
@@ -154,7 +161,27 @@ export class JikeAdapter extends BasePlatformAdapter {
     }
 
     this.log.info('已点击发送按钮')
+
+    // 即刻发送后无 toast，通过检测编辑框清空/内容消失判断成功
     await randomDelay(waitAfterMin, waitAfterMax)
+    const editorCleared = await this.page.evaluate((sels) => {
+      for (const sel of sels) {
+        const el = document.querySelector(sel)
+        if (el) {
+          const text = el.textContent || el.innerText || ''
+          // 编辑框文本被清空 = 发送成功
+          return text.trim().length < 10
+        }
+      }
+      // 编辑框不存在也算成功（可能页面已刷新）
+      return true
+    }, [SELECTORS.contentInput, SELECTORS.contentInputAlt])
+
+    if (editorCleared) {
+      this.log.info('发送成功：编辑框已清空')
+    } else {
+      this.log.warn('发送结果未确认：编辑框仍有内容，可能发送失败')
+    }
     await this.conditionalScreenshot('jike_after_publish', 'after_publish')
   }
 

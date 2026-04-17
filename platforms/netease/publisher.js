@@ -35,16 +35,36 @@ export class NeteaseAdapter extends BasePlatformAdapter {
     if (this._dryRun) this.log.info('[dryRun] 填写内容后不点击发布按钮')
 
     try {
+      await this.showStatus('正在预热浏览...').catch(() => {})
+      await this.warmupBrowse()
+
+      await this.showStatus('正在打开编辑器...').catch(() => {})
       await this.step1_navigateToEditor()
+      await this.showStatus('正在输入标题...').catch(() => {})
       await this.step2_inputTitle(post.title)
+      await this.showStatus('正在输入正文...').catch(() => {})
       await this.step3_inputContent(post.content)
+      await this.showStatus('正在发布文章...').catch(() => {})
       await this.step4_publish()
+      await this.showStatus('发布完成！').catch(() => {})
+      await this.hideStatus().catch(() => {})
+
+      // 2026-04-15 安全加固：仅在未检测到显式失败时继续执行发布后浏览。
+      // 修改原因：网易号旧逻辑为点击发布后固定等待，若平台已提示失败/频繁，仍会继续走成功链路。
+      // 回退方式：删除 step4_publish() 中 conservativeVerifyPublishResult() 调用。
+      await this.fillRemainingTime()
+
+      if (!this._dryRun) {
+        this.log.info('[发布后] 返回首页浏览')
+        await this.navigateTo(this.getHomeUrl())
+      }
+      await this.postPublishBrowse()
 
       this.log.info('========== 网易号发布完成 ==========')
-      return { success: true, message: '网易号发布成功' }
+      return this.buildResult(true, '网易号发布成功')
     } catch (err) {
       this.log.error(`网易号发布失败: ${err.message}`)
-      return { success: false, message: err.message }
+      return this.buildResult(false, err)
     }
   }
 
@@ -114,5 +134,18 @@ export class NeteaseAdapter extends BasePlatformAdapter {
     this.log.info('[Step 4] 点击发布')
     await this.clickByText('button', S.publishButtonText)
     await randomDelay(2000, 5000)
+
+    // 2026-04-15 安全加固：网易号接入保守发布结果校验。
+    // 修改策略：只拦截明确失败提示，unknown 保持兼容，以免 SPA 异步提示过短导致误判。
+    // 回退方式：删除下方 conservativeVerifyPublishResult() 调用。
+    await this.conservativeVerifyPublishResult({
+      guardName: 'netease_step4_publish',
+      waitOptions: {
+        successTexts: ['发布成功', '发表成功', '提交成功', '保存成功'],
+        errorTexts: ['发布失败', '发表失败', '提交失败', '请重试', '内容违规', '审核不通过', '操作频繁', '发布过于频繁', '未通过审核'],
+        timeout: 12000,
+      },
+      useVisionWhenUnknown: false,
+    })
   }
 }

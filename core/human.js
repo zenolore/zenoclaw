@@ -428,11 +428,19 @@ export async function humanScroll(page) {
  *   browse.mouse_move_chance       — 移动鼠标概率
  *   browse.scroll_chance           — 滚动概率
  *   browse.idle_chance             — 发呆概率
+ *   browse.click_post_chance       — 点击帖子阅读概率（需传入 postSelector）
+ *   browse.post_read_min/max       — 阅读帖子停留时间（ms）
  *   browse.scroll_distance_min/max — 浏览时滚动距离
  *   browse.action_interval_min/max — 动作间隔
  *   scroll.down_bias               — 滚动方向偏好
+ *
+ * @param {Page} page
+ * @param {object} cursor - ghost-cursor 实例
+ * @param {number} durationMs - 浏览总时长（ms）
+ * @param {object} [options] - 可选参数
+ * @param {string} [options.postSelector] - 帖子元素选择器，提供后启用点击帖子行为
  */
-export async function simulateBrowsing(page, cursor, durationMs) {
+export async function simulateBrowsing(page, cursor, durationMs, options = {}) {
   const log = getLogger()
   const startTime = Date.now()
   log.info(`模拟浏览页面 ${(durationMs / 1000).toFixed(0)}s`)
@@ -440,14 +448,18 @@ export async function simulateBrowsing(page, cursor, durationMs) {
   const rawMove        = cfg('browse.mouse_move_chance', 0.3)
   const rawScroll      = cfg('browse.scroll_chance', 0.3)
   const rawIdle        = cfg('browse.idle_chance', 0.4)
-  const total          = rawMove + rawScroll + rawIdle
+  const rawClickPost   = options.postSelector ? cfg('browse.click_post_chance', 0.15) : 0
+  const total          = rawMove + rawScroll + rawIdle + rawClickPost
   const moveChance     = rawMove / total
   const scrollChance   = rawScroll / total
+  const clickPostChance = rawClickPost / total
   const scrollDistMin  = cfg('browse.scroll_distance_min', 50)
   const scrollDistMax  = cfg('browse.scroll_distance_max', 300)
   const intervalMin    = cfg('browse.action_interval_min', 2000)
   const intervalMax    = cfg('browse.action_interval_max', 8000)
   const downBias       = cfg('scroll.down_bias', 0.7)
+  const postReadMin    = cfg('browse.post_read_min', 3000)
+  const postReadMax    = cfg('browse.post_read_max', 8000)
 
   while (Date.now() - startTime < durationMs) {
     const action = Math.random()
@@ -458,6 +470,21 @@ export async function simulateBrowsing(page, cursor, durationMs) {
       const direction = Math.random() < downBias ? 1 : -1
       const distance = Math.floor(gaussianRandom(scrollDistMin, scrollDistMax)) * direction
       await page.mouse.wheel({ deltaY: distance })
+    } else if (clickPostChance > 0 && action < moveChance + scrollChance + clickPostChance) {
+      // 点击帖子 → 阅读几秒 → 返回
+      try {
+        const posts = await page.$$(options.postSelector)
+        if (posts.length > 0) {
+          const idx = Math.floor(Math.random() * Math.min(posts.length, 5))
+          log.debug(`[浏览] 点击第 ${idx + 1} 条帖子阅读`)
+          await cursor.click(posts[idx], { paddingPercentage: 10 })
+          await randomDelay(postReadMin, postReadMax)
+          await page.goBack({ waitUntil: 'networkidle2', timeout: 10000 }).catch(() => {})
+          await randomDelay(1000, 2000)
+        }
+      } catch (e) {
+        log.debug(`[浏览] 点击帖子失败，跳过: ${e.message}`)
+      }
     }
     // else: idle — 什么都不做（真人最常见）
 

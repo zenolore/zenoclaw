@@ -1,7 +1,7 @@
 import { BasePlatformAdapter } from '../base.js'
 import { randomDelay, sleep } from '../../core/human.js'
 import { cfg } from '../../core/config.js'
-import { PUBLISH_SELECTORS, INTERACT_SELECTORS } from './selectors.js'
+import { PUBLISH_SELECTORS, INTERACT_SELECTORS, BROWSE_SELECTORS } from './selectors.js'
 import path from 'path'
 
 /**
@@ -31,6 +31,7 @@ export class BilibiliAdapter extends BasePlatformAdapter {
   getHomeUrl() { return 'https://www.bilibili.com/' }
   getLoginUrl() { return 'https://passport.bilibili.com/login' }
   getInteractSelectors() { return INTERACT_SELECTORS }
+  getBrowsePostSelector() { return BROWSE_SELECTORS.feedItem }
 
   /**
    * 执行完整的专栏投稿流程
@@ -42,26 +43,44 @@ export class BilibiliAdapter extends BasePlatformAdapter {
     if (this._dryRun) this.log.info('[dryRun] 审核模式：填写内容后不点击发布按钮')
 
     try {
+      await this.showStatus('正在预热浏览...').catch(() => {})
+      await this.warmupBrowse()
+
+      await this.showStatus('正在打开投稿页面...').catch(() => {})
       await this.step1_openPublishPage()
+      await this.showStatus('正在输入标题...').catch(() => {})
       await this.step2_inputTitle(post.title)
+      await this.showStatus('正在输入正文...').catch(() => {})
       await this.step3_inputContent(post.content)
 
       if (post.images && post.images.length > 0) {
+        await this.showStatus('正在上传封面图...').catch(() => {})
         await this.step4_uploadCover(post.images[0])
       }
 
+      await this.showStatus('正在发布文章...').catch(() => {})
       await this.step5_publish()
+      await this.showStatus('发布完成！').catch(() => {})
+      await this.hideStatus().catch(() => {})
 
+      // 2026-04-15 安全加固：仅在 step5_publish 未命中显式失败时，才继续执行发布后浏览。
+      // 修改原因：B站原逻辑点击发布后只等待和截图，若页面已出现失败/审核/频繁提示，仍会继续伪装成功链路。
+      // 回退方式：删除 step5_publish() 中 conservativeVerifyPublishResult() 调用即可恢复旧逻辑。
       await this.fillRemainingTime()
+
+      if (!this._dryRun) {
+        this.log.info('[发布后] 返回首页浏览')
+        await this.navigateTo(this.getHomeUrl())
+      }
       await this.postPublishBrowse()
 
       this.log.info('========== B站投稿成功 ==========')
-      return { success: true, message: '发布成功' }
+      return this.buildResult(true, '发布成功')
 
     } catch (err) {
       this.log.error(`B站投稿失败: ${err.message}`)
       await this.conditionalScreenshot('bilibili_error', 'error')
-      return { success: false, message: err.message }
+      return this.buildResult(false, err)
     }
   }
 
@@ -115,7 +134,8 @@ export class BilibiliAdapter extends BasePlatformAdapter {
     await randomDelay(300, 800)
 
     // CDP 输入标题（防止中文乱码）
-    const cdp = await frame.target().createCDPSession()
+    // 注意: Frame 没有 .target()，使用 page 级 CDP；insertText 作用于当前聚焦元素
+    const cdp = await this.page.target().createCDPSession()
     await cdp.send('Input.insertText', { text: title })
     await cdp.detach()
 
@@ -144,7 +164,7 @@ export class BilibiliAdapter extends BasePlatformAdapter {
       return el.getAttribute('contenteditable') === 'true'
     }, SELECTORS.contentInput)
 
-    const cdp = await frame.target().createCDPSession()
+    const cdp = await this.page.target().createCDPSession()
     const paragraphs = content.split('\n')
 
     if (ceEnabled) {
@@ -156,7 +176,7 @@ export class BilibiliAdapter extends BasePlatformAdapter {
         }
         if (i < paragraphs.length - 1) {
           await randomDelay(200, 500)
-          await frame.keyboard.press('Enter')
+          await this.page.keyboard.press('Enter')
           await randomDelay(800, 2000)
         }
       }
@@ -170,7 +190,7 @@ export class BilibiliAdapter extends BasePlatformAdapter {
         }
         if (i < paragraphs.length - 1) {
           await randomDelay(200, 500)
-          await frame.keyboard.press('Enter')
+          await this.page.keyboard.press('Enter')
           await randomDelay(800, 2000)
         }
       }
@@ -266,5 +286,21 @@ export class BilibiliAdapter extends BasePlatformAdapter {
 
     await randomDelay(waitAfterMin, waitAfterMax)
     await this.conditionalScreenshot('bilibili_after_publish', 'after_publish')
+
+    // 2026-04-15 安全加固：B站接入保守发布结果校验。
+    // 修改策略：
+    // - 先保留现有等待 + 截图，避免改变页面稳定时机；
+    // - 再附加文本失败检测，只拦截明确失败；
+    // - 当前不把 unknown 收紧为失败，避免影响现网成功率。
+    // 回退方式：删除下方 conservativeVerifyPublishResult() 调用。
+    await this.conservativeVerifyPublishResult({
+      guardName: 'bilibili_step5_publish',
+      waitOptions: {
+        successTexts: ['发布成功', '投稿成功', '发表成功', '提交成功'],
+        errorTexts: ['发布失败', '投稿失败', '发表失败', '提交失败', '请重试', '内容违规', '审核不通过', '操作频繁', '发布过于频繁', '未通过审核'],
+        timeout: 12000,
+      },
+      useVisionWhenUnknown: false,
+    })
   }
 }

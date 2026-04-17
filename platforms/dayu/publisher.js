@@ -35,17 +35,35 @@ export class DayuAdapter extends BasePlatformAdapter {
     if (this._dryRun) this.log.info('[dryRun] 填写内容后不点击发布按钮')
 
     try {
+      await this.showStatus('正在预热浏览...').catch(() => {})
+      await this.warmupBrowse()
+
+      await this.showStatus('正在打开发布页面...').catch(() => {})
       await this.step1_openPublishPage()
+      await this.showStatus('正在输入标题...').catch(() => {})
       await this.step2_inputTitle(post.title)
+      await this.showStatus('正在输入正文...').catch(() => {})
       await this.step3_inputContent(post.content)
+      await this.showStatus('正在设置封面...').catch(() => {})
       await this.step4_setCover(post.images?.[0])
+      await this.showStatus('正在发布文章...').catch(() => {})
       await this.step5_publish()
+      await this.showStatus('发布完成！').catch(() => {})
+      await this.hideStatus().catch(() => {})
+
+      await this.fillRemainingTime()
+
+      if (!this._dryRun) {
+        this.log.info('[发布后] 返回首页浏览')
+        await this.navigateTo(this.getHomeUrl())
+      }
+      await this.postPublishBrowse()
 
       this.log.info('========== 大鱼号发布完成 ==========')
-      return { success: true, message: '大鱼号发布成功' }
+      return this.buildResult(true, '大鱼号发布成功')
     } catch (err) {
       this.log.error(`大鱼号发布失败: ${err.message}`)
-      return { success: false, message: err.message }
+      return this.buildResult(false, err)
     }
   }
 

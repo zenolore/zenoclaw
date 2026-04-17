@@ -15,13 +15,10 @@
  *
  * 退出码: 0 成功, 1 失败
  */
-import puppeteer from 'puppeteer-extra'
-import StealthPlugin from 'puppeteer-extra-plugin-stealth'
+import puppeteer from 'puppeteer-core'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { loadReader } from '../platforms/loader.js'
-
-puppeteer.use(StealthPlugin())
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 

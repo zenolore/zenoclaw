@@ -1,8 +1,9 @@
+import fs from 'node:fs'
+import path from 'node:path'
 import { BasePlatformAdapter } from '../base.js'
 import { randomDelay, sleep } from '../../core/human.js'
 import { cfg } from '../../core/config.js'
-import { PUBLISH_SELECTORS, INTERACT_SELECTORS } from './selectors.js'
-import path from 'path'
+import { PUBLISH_SELECTORS, INTERACT_SELECTORS, BROWSE_SELECTORS } from './selectors.js'
 
 /**
  * 知乎专栏文章发帖适配器
@@ -32,55 +33,94 @@ export class ZhihuAdapter extends BasePlatformAdapter {
   getHomeUrl() { return 'https://www.zhihu.com/' }
   getLoginUrl() { return 'https://www.zhihu.com/signin' }
   getInteractSelectors() { return INTERACT_SELECTORS }
+  getBrowsePostSelector() { return BROWSE_SELECTORS.feedItem }
 
   /**
    * 执行完整的发帖流程
    */
   async publish(post) {
     this.log.info('========== 知乎发帖开始 ==========')
-    this.log.info(`标题: ${post.title}`)
-    this._dryRun = !!post.dryRun
-    if (this._dryRun) this.log.info('[dryRun] 审核模式：填写内容后不点击发布按钮')
 
     try {
+      const normalizedPost = this.normalizePostForPublish(post)
+      this.log.info(`标题: ${normalizedPost.title}`)
+      this._dryRun = !!normalizedPost.dryRun
+      if (this._dryRun) this.log.info('[dryRun] 审核模式：填写内容后不点击发布按钮')
+
+      // 发帖前预热浏览：先浏览首页 feed，建立自然行为链
+      await this.showStatus('正在预热浏览...').catch(() => {})
+      await this.warmupBrowse()
+
+      await this.showStatus('正在打开写文章页面...').catch(() => {})
       await this.step1_openPublishPage()
 
       // 知乎是先填标题/正文，再上传封面图
-      await this.step2_inputTitle(post.title)
+      await this.showStatus('正在输入标题...').catch(() => {})
+      await this.step2_inputTitle(normalizedPost.title)
 
       // 正文末尾追加 #hashtags（与旧 Playwright 逻辑对齐 L982-987）
-      let bodyContent = post.content
-      if (post.tags?.length) {
-        const hashTags = post.tags.map(t => `#${t.replace(/^#/, '')}`).join(' ')
-        bodyContent = `${post.content}\n\n${hashTags}`
+      let bodyContent = normalizedPost.content
+      if (normalizedPost.tags?.length) {
+        const hashTags = normalizedPost.tags.map(t => `#${t.replace(/^#/, '')}`).join(' ')
+        bodyContent = `${normalizedPost.content}\n\n${hashTags}`
       }
-      await this.step3_inputContent(bodyContent)
-
-      if (post.images && post.images.length > 0) {
-        await this.step4_uploadCover(post.images[0])
-      }
-
-      await this.step4b_selectQuestion(post.tags || [])
-
-      if (post.tags && post.tags.length > 0) {
-        await this.step5_addTags(post.tags)
+      await this.showStatus('正在输入正文...').catch(() => {})
+      if (normalizedPost.contentBlocks?.length) {
+        await this.step3_inputContentBlocks(normalizedPost.contentBlocks)
+      } else {
+        await this.step3_inputContent(bodyContent)
       }
 
+      if (normalizedPost.images && normalizedPost.images.length > 0) {
+        await this.showStatus('正在上传封面图...').catch(() => {})
+        await this.step4_uploadCover(normalizedPost.images[0])
+      }
+
+      await this.showStatus('正在选择投稿问题...').catch(() => {})
+      await this.step4b_selectQuestion(normalizedPost.tags || [])
+
+      if (normalizedPost.tags && normalizedPost.tags.length > 0) {
+        await this.showStatus('正在添加话题标签...').catch(() => {})
+        await this.step5_addTags(normalizedPost.tags)
+      }
+
+      await this.verifyPageState(normalizedPost)
+
+      // AI 视觉验证：发布前截图确认内容正确
+      const verification = await this.verifyBeforePublish({
+        title: normalizedPost.title,
+        content: normalizedPost.content?.slice(0, 100),
+        imageCount: normalizedPost.images?.length || 0
+      })
+      if (!verification.pass && verification.confidence > 0.8) {
+        if (this._dryRun) {
+          throw new Error(`[视觉验证] 内容验证未通过（置信度 ${verification.confidence}）: ${verification.details}`)
+        }
+        this.log.warn(`[视觉验证] 内容验证未通过，但继续发布: ${verification.details}`)
+      }
+
+      await this.showStatus('正在发布文章...').catch(() => {})
       await this.step6_publish()
+      await this.showStatus('发布完成！').catch(() => {})
 
       // 补足时间到目标总时长
       await this.fillRemainingTime()
 
-      // 发布后继续浏览
+      // 返回首页后继续浏览（dry-run 模式留在发布页供人工检查）
+      if (!this._dryRun) {
+        this.log.info('[发布后] 返回首页浏览')
+        await this.navigateTo(this.getHomeUrl())
+      }
       await this.postPublishBrowse()
 
+      await this.hideStatus().catch(() => {})
       this.log.info('========== 知乎发帖成功 ==========')
-      return { success: true, message: '发布成功' }
+      return this.buildResult(true, '发布成功')
 
     } catch (err) {
       this.log.error(`知乎发帖失败: ${err.message}`)
       await this.conditionalScreenshot('zhihu_error', 'error')
-      return { success: false, message: err.message }
+      return this.buildResult(false, err)
     }
   }
 
@@ -89,17 +129,48 @@ export class ZhihuAdapter extends BasePlatformAdapter {
   // ============================================================
 
   async step1_openPublishPage() {
-    this.log.info('[步骤1] 打开知乎写文章页面')
-    await this.navigateTo(this.publishUrl)
+    this.log.info('[步骤1] 从首页点击「写文章」进入发帖')
+
+    // 确保在首页（warmupBrowse 可能已导航过，也可能禁用了）
+    const currentUrl = this.page.url()
+    if (!currentUrl.includes('zhihu.com')) {
+      await this.navigateTo(this.getHomeUrl())
+    }
 
     // 登录检测
-    const currentUrl = this.page.url()
-    if (currentUrl.includes(SELECTORS.loginPageIndicator)) {
+    const afterUrl = this.page.url()
+    if (afterUrl.includes(SELECTORS.loginPageIndicator)) {
       throw new Error('未登录或登录已过期，请先在浏览器中登录知乎')
     }
 
+    // 找到并点击「写文章」按钮
+    const writeBtn = await this.findByText('a', '写文章')
+      || await this.findByText('button', '写文章')
+    if (!writeBtn) {
+      // fallback：直接导航到写文章页
+      this.log.warn('[步骤1] 未找到「写文章」按钮，fallback 直接导航')
+      await this.navigateTo(this.publishUrl)
+    } else {
+      await this.clickElement(writeBtn)
+      this.log.info('[步骤1] 已点击「写文章」，等待编辑页加载')
+      await sleep(3000)
+    }
+
+    // 等待标题输入框出现，确认编辑页已加载
+    try {
+      await this.page.waitForSelector(SELECTORS.titleInput, { timeout: 10000 })
+      this.log.info('[步骤1] 写文章页面已加载')
+    } catch {
+      // 再试 alt 选择器
+      try {
+        await this.page.waitForSelector(SELECTORS.titleInputAlt, { timeout: 5000 })
+        this.log.info('[步骤1] 写文章页面已加载（alt selector）')
+      } catch {
+        throw new Error('写文章页面未加载，标题输入框未出现')
+      }
+    }
+
     await this.conditionalScreenshot('zhihu_step1_open', 'step')
-    await this.browseForStep('open_page')
   }
 
   async step2_inputTitle(title) {
@@ -130,6 +201,66 @@ export class ZhihuAdapter extends BasePlatformAdapter {
     await this.actionPause()
     await this.conditionalScreenshot('zhihu_step3_content', 'step')
     await this.browseForStep('input_content')
+  }
+
+  /**
+   * Step 3 变体：输入富文本正文（文字 + 图片交替 contentBlocks）
+   */
+  async step3_inputContentBlocks(contentBlocks) {
+    this.log.info(`[步骤3] 输入正文 contentBlocks（${contentBlocks.length} 块）`)
+
+    const selector = await this.findSelector([
+      SELECTORS.contentInput,
+      SELECTORS.contentInputAlt,
+      SELECTORS.contentInputFallback,
+    ])
+    await this.page.click(selector)
+    await randomDelay(300, 600)
+
+    for (let i = 0; i < contentBlocks.length; i++) {
+      const block = contentBlocks[i]
+      if (block.type === 'text' && block.value) {
+        await this.page.evaluate((text) => {
+          const dt = new DataTransfer()
+          dt.setData('text/plain', text)
+          document.activeElement.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true }))
+        }, block.value)
+        await randomDelay(300, 500)
+        await this.page.keyboard.press('Enter')
+        await randomDelay(200, 400)
+        this.log.info(`  文字块 ${i + 1}: ${block.value.slice(0, 30)}...`)
+      } else if (block.type === 'image' && block.src) {
+        if (!fs.existsSync(block.src)) {
+          this.log.warn(`  图片不存在，跳过: ${block.src}`)
+          continue
+        }
+        const buf = fs.readFileSync(block.src)
+        const base64 = buf.toString('base64')
+        const ext = path.extname(block.src).toLowerCase()
+        const mimeType = (ext === '.jpg' || ext === '.jpeg') ? 'image/jpeg' : 'image/png'
+        const fileName = path.basename(block.src)
+
+        await this.page.evaluate(async (b64, mime, name) => {
+          const bin = atob(b64)
+          const bytes = new Uint8Array(bin.length)
+          for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+          const blob = new Blob([bytes], { type: mime })
+          const file = new File([blob], name, { type: mime })
+          const dt = new DataTransfer()
+          dt.items.add(file)
+          document.activeElement.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true }))
+        }, base64, mimeType, fileName)
+
+        this.log.info(`  图片块 ${i + 1}: ${fileName} 上传中...`)
+        await randomDelay(4000, 6000)
+        await this.page.keyboard.press('ArrowDown')
+        await this.page.keyboard.press('End')
+        await this.page.keyboard.press('Enter')
+        await randomDelay(300, 500)
+      }
+    }
+    this.log.info('contentBlocks 正文输入完成')
+    await this.conditionalScreenshot('zhihu_step3_contentblocks', 'step')
   }
 
   async step4_uploadCover(imagePath) {
@@ -362,45 +493,152 @@ export class ZhihuAdapter extends BasePlatformAdapter {
 
     const reviewDelayMin = cfg('steps.publish.review_delay_min', 3000)
     const reviewDelayMax = cfg('steps.publish.review_delay_max', 8000)
-    const waitAfterMin = cfg('steps.publish.wait_after_min', 5000)
-    const waitAfterMax = cfg('steps.publish.wait_after_max', 15000)
 
     // 上下滚动检查内容
     await this.scroll()
     await randomDelay(reviewDelayMin, reviewDelayMax)
 
-    // 发布前截图
-    await this.conditionalScreenshot('zhihu_before_publish', 'before_publish')
-
-    // 查找并点击发布按钮（CSS + 文本匹配 fallback）
-    let clicked = false
-    try {
-      const el = await this.page.$(SELECTORS.publishButton)
-      if (el) {
-        await this.click(SELECTORS.publishButton)
-        clicked = true
-      }
-    } catch { /* continue */ }
-
-    if (!clicked) {
-      const btn = await this.findByText('button', '发布')
-      if (btn) {
-        await btn.click()
-        clicked = true
-      }
+    // 查找发布按钮（CSS + 文本匹配 fallback）
+    let publishEl = await this.page.$(SELECTORS.publishButton)
+    if (!publishEl) {
+      publishEl = await this.findByText('button', '发布')
     }
-
-    if (!clicked) {
+    if (!publishEl) {
       throw new Error('未找到发布按钮，页面结构可能已变更')
     }
 
-    this.log.info('已点击发布按钮')
+    // 滚动到按钮可视区域，用 clickElement 带鼠标轨迹点击
+    await publishEl.evaluate(node => node.scrollIntoView({ block: 'center' }))
+    await randomDelay(300, 600)
+    await this.clickElement(publishEl)
+    this.log.info('已点击发布按钮，等待发布结果...')
 
-    // 等待发布结果
-    await randomDelay(waitAfterMin, waitAfterMax)
+    // 等待 URL 变化 — 知乎发布成功后跳转到 /p/xxxxx
+    let published = await this._waitForUrlChange(15000)
 
-    // 发布后截图
+    // 首次失败 → fallback: 用 page.click 重试
+    if (!published) {
+      this.log.warn('[步骤6] 首次点击未生效，用 page.click 重试')
+      try {
+        const retryEl = await this.page.$(SELECTORS.publishButton)
+          || await this.findByText('button', '发布')
+        if (retryEl) await retryEl.click()
+      } catch { /* ignore */ }
+      published = await this._waitForUrlChange(10000)
+    }
+
+    if (!published) {
+      await this.conditionalScreenshot('zhihu_publish_failed', 'error')
+      throw new Error('发布失败：点击发布按钮后页面未跳转，文章可能未发出')
+    }
+
+    this.log.info(`[步骤6] 发布成功：页面已跳转到 ${this.page.url()}`)
     await this.conditionalScreenshot('zhihu_after_publish', 'after_publish')
+
+    // 关闭「发布成功」分享弹窗
+    await this._closeSuccessDialog()
+  }
+
+  /**
+   * 关闭发布成功后的分享弹窗
+   */
+  async _closeSuccessDialog() {
+    try {
+      await sleep(1500)
+      // 弹窗右上角 X 关闭按钮
+      const closeBtn = await this.page.evaluateHandle(() => {
+        // 弹窗内的关闭按钮（SVG close icon 或 × 文本）
+        const btns = Array.from(document.querySelectorAll('button, [role="button"], .Modal-closeButton, .css-1dbjc4n'))
+        const closeBtn = btns.find(b => {
+          const svg = b.querySelector('svg')
+          const text = b.textContent?.trim()
+          const ariaLabel = b.getAttribute('aria-label')
+          return ariaLabel === '关闭' || text === '×' || text === 'X'
+            || (svg && b.getBoundingClientRect().width < 50)
+        })
+        if (closeBtn) return closeBtn
+        // fallback: modal overlay 外层点击
+        const modal = document.querySelector('.Modal-backdrop, .Overlay, [class*="modal"]')
+        return modal || null
+      })
+      const el = closeBtn.asElement()
+      if (el) {
+        await el.click()
+        this.log.info('[步骤6] 已关闭发布成功弹窗')
+        await sleep(800)
+      } else {
+        // fallback: Escape 关闭
+        await this.page.keyboard.press('Escape')
+        this.log.info('[步骤6] Escape 关闭弹窗')
+        await sleep(800)
+      }
+    } catch (e) {
+      this.log.debug(`关闭发布成功弹窗失败: ${e.message}`)
+      await this.page.keyboard.press('Escape').catch(() => {})
+    }
+  }
+
+  /**
+   * 等待 URL 从 /write 变化（知乎发布成功后跳转到文章页）
+   * @param {number} timeoutMs - 最大等待时间
+   * @returns {Promise<boolean>} URL 是否已变化
+   */
+  async _waitForUrlChange(timeoutMs) {
+    const pollInterval = 1000
+    const maxAttempts = Math.ceil(timeoutMs / pollInterval)
+
+    for (let i = 0; i < maxAttempts; i++) {
+      await sleep(pollInterval)
+      const url = this.page.url()
+      if (!url.includes('/write')) return true
+    }
+    return false
+  }
+
+  // ─── normalizePostForPublish ─────────────────────────────────────
+  normalizePostForPublish(post) {
+    const normalized = {
+      ...post,
+      coverType: post.coverType || ((post.images && post.images.length > 0) ? 'single' : undefined),
+    }
+    // 知乎只支持单图封面
+    if (normalized.coverType === 'triple') {
+      this.log.warn('知乎不支持三图封面，降级为单图')
+      normalized.coverType = 'single'
+    }
+    if (normalized.coverType === 'single' && (!normalized.images || normalized.images.length < 1)) {
+      throw new Error('知乎单图封面至少需要 1 张图片')
+    }
+    return normalized
+  }
+
+  // ─── verifyPageState ─────────────────────────────────────────────
+  async verifyPageState(post) {
+    this.log.info('[验证] 发布前回读页面状态')
+
+    // 回读标题
+    const titleText = await this.page.evaluate(() => {
+      const textarea = document.querySelector('label.WriteIndex-titleInput textarea')
+      return textarea?.value?.trim() || ''
+    }).catch(() => '')
+    const titleOk = titleText.length > 0
+    this.log.info(`  标题: ${titleOk ? '✅' : '❌'} (${titleText.slice(0, 30)})`)
+
+    // 回读正文长度
+    const contentLen = await this.page.evaluate(() => {
+      const el = document.querySelector('.Editable-content.RichText') || document.querySelector('div[contenteditable="true"]')
+      return el?.innerText?.trim()?.length || 0
+    }).catch(() => 0)
+    this.log.info(`  正文字数: ${contentLen}`)
+
+    // 回读发布按钮是否可见
+    const publishBtnVisible = await this.page.evaluate(() => {
+      const btn = document.querySelector('button.Button--primary')
+      return btn ? btn.offsetParent !== null : false
+    }).catch(() => false)
+    this.log.info(`  发布按钮: ${publishBtnVisible ? '✅ 可见' : '❌ 不可见'}`)
+
+    this.addStepEvidence('verifyPageState', { titleOk, contentLen, publishBtnVisible })
   }
 
 }

@@ -36,6 +36,8 @@ export class QqAdapter extends BasePlatformAdapter {
     if (this._dryRun) this.log.info('[dryRun] 填写内容后不点击发布按钮')
 
     try {
+      await this.warmupBrowse()
+
       await this.step1_openPublishPage()
       await this.step2_inputTitle(post.title)
       await this.step3_inputContent(post.content)
@@ -54,11 +56,22 @@ export class QqAdapter extends BasePlatformAdapter {
 
       await this.step7_publish()
 
+      // 2026-04-15 安全加固：只有 step7_publish 未命中显式失败时，才继续执行发布后浏览。
+      // 修改原因：企鹅号旧逻辑点击发布后仅固定等待，若页面已提示失败/审核/频繁，旧逻辑仍会当成成功继续跑。
+      // 回退方式：删除 step7_publish() 中 conservativeVerifyPublishResult() 调用。
+      await this.fillRemainingTime()
+
+      if (!this._dryRun) {
+        this.log.info('[发布后] 返回首页浏览')
+        await this.navigateTo(this.getHomeUrl())
+      }
+      await this.postPublishBrowse()
+
       this.log.info('========== 企鹅号发布完成 ==========')
-      return { success: true, message: '企鹅号发布成功' }
+      return this.buildResult(true, '企鹅号发布成功')
     } catch (err) {
       this.log.error(`企鹅号发布失败: ${err.message}`)
-      return { success: false, message: err.message }
+      return this.buildResult(false, err)
     }
   }
 
@@ -140,5 +153,18 @@ export class QqAdapter extends BasePlatformAdapter {
     this.log.info('[Step 7] 点击发布')
     await this.clickByText('button', S.publishButtonText)
     await randomDelay(2000, 5000)
+
+    // 2026-04-15 安全加固：企鹅号接入保守发布结果校验。
+    // 修改策略：仅拦截明确失败提示，不把 unknown 收紧为失败，优先保证低风险上线。
+    // 回退方式：删除下方 conservativeVerifyPublishResult() 调用。
+    await this.conservativeVerifyPublishResult({
+      guardName: 'qq_step7_publish',
+      waitOptions: {
+        successTexts: ['发布成功', '发表成功', '提交成功', '保存成功'],
+        errorTexts: ['发布失败', '发表失败', '提交失败', '请重试', '内容违规', '审核不通过', '操作频繁', '发布过于频繁', '未通过审核'],
+        timeout: 12000,
+      },
+      useVisionWhenUnknown: false,
+    })
   }
 }

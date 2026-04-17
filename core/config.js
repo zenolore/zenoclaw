@@ -5,6 +5,8 @@
  * 通过 cfg('mouse.click_wait_min', 50) 获取单个值（带默认值）。
  */
 
+import { bp as _bp, loadBehaviorProfile } from './behavior-profile.js'
+
 let _config = null
 
 /**
@@ -12,6 +14,8 @@ let _config = null
  */
 export function initConfig(config) {
   _config = config || {}
+  // 自动加载行为特征录制数据（如果存在）
+  loadBehaviorProfile()
 }
 
 /**
@@ -30,16 +34,24 @@ export function getConfig() {
  *   cfg('browser.navigation_timeout', 60000)
  */
 export function cfg(path, defaultValue) {
+  // 优先级: 用户 yaml 配置 > 录制行为特征 > 硬编码默认值
   const config = _config || {}
   const keys = path.split('.')
   let value = config
   for (const key of keys) {
     if (value == null || typeof value !== 'object') {
-      return defaultValue
+      value = undefined
+      break
     }
     value = value[key]
   }
-  return value !== undefined && value !== null && value !== '' ? value : defaultValue
+  if (value !== undefined && value !== null && value !== '') return value
+
+  // 用户未配置 → 查录制行为特征
+  const bpValue = _bp(path)
+  if (bpValue !== undefined) return bpValue
+
+  return defaultValue
 }
 
 // ============================================================
@@ -173,5 +185,18 @@ export const DEFAULTS = {
     max_attempts: 2,
     delay_min: 60000,
     delay_max: 300000,
+  },
+
+  // --- midscene（AI 视觉状态机）---
+  midscene: {
+    enabled: false,                // 是否启用 Midscene 视觉验证/操作
+    model_name: 'glm-4v-flash',   // 视觉模型名称
+    model_family: 'glm-v',        // 模型族（Midscene 合法值: glm-v, doubao-vision, qwen3-vl, gemini 等）
+    base_url: 'https://open.bigmodel.cn/api/paas/v4',  // 不含 /chat/completions（SDK 自动追加）
+    api_key: '',                   // 也可通过 MIDSCENE_MODEL_API_KEY 环境变量设置
+    timeout: 30000,                // 单次 AI 调用超时
+    verify_after_step: true,       // 关键步骤后是否 AI 验证
+    fallback_on_selector_miss: true, // 选择器未命中时是否降级到 AI 操作
+    auto_dismiss_popup: true,      // 是否自动用 AI 处理意外弹窗
   },
 }

@@ -37,9 +37,10 @@ export const PUBLISH_SELECTORS = {
   // 图片上传
   imageInput: "input[type='file']",
 
-  // 发布按钮: 填写内容后出现，页面是中文时文本可能是"发布"
-  publishButtonText: '发布',
+  // 发布按钮: 填写内容后启用，新版中文界面文本为"发帖"（旧版可能是"发布"）
+  publishButtonText: '发帖',
   publishButtonTextAlt: 'Post',
+  publishButtonTextFallbacks: ['发布', 'Submit'],
   publishButtonType: 'button[type="submit"]',
 
   // 登录检测（包含未登录跳转到 age verification 的情况）

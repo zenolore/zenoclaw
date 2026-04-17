@@ -1,6 +1,6 @@
 {
   "name": "zenoclaw",
-  "version": "0.1.0",
+  "version": "0.5.1",
   "description": "ZenoClaw — 开源智能浏览器自动化引擎 | 自动发帖 · 数据追踪 · 智能互动 · 反机器人检测",
   "main": "core/index.js",
   "type": "module",
@@ -56,5 +56,9 @@
     "puppeteer-extra-plugin-stealth": "^2.11.2",
     "uuid": "^9.0.0",
     "winston": "^3.11.0"
+  },
+  "devDependencies": {
+    "@midscene/web": "^1.7.3",
+    "playwright-core": "^1.59.1"
   }
 }

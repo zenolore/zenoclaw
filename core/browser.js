@@ -1,12 +1,9 @@
-import puppeteer from 'puppeteer-extra'
-import StealthPlugin from 'puppeteer-extra-plugin-stealth'
+import puppeteer from 'puppeteer-core'
 import { spawn } from 'child_process'
 import fs from 'fs'
 import { getLogger } from './logger.js'
 import { cfg } from './config.js'
 import { gaussianRandom } from './human.js'
-
-puppeteer.use(StealthPlugin())
 
 // ============================================================
 // 浏览器操作互斥锁
@@ -59,15 +56,22 @@ export async function getBrowser() {
   const log = getLogger()
   const debugPort = cfg('browser.debug_port', 9222)
 
-  // 第一步：尝试连接已运行的 Chrome
-  const existing = await tryConnectExisting(debugPort, log)
-  if (existing) {
-    log.info('已连接到当前运行的 Chrome 浏览器')
-    const page = await createConfiguredPage(existing, log)
-    return { browser: existing, page, isNewLaunch: false }
+  // 带重试的连接（前次 disconnect 后 WebSocket slot 可能需要几秒释放）
+  const maxRetries = 3
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    const existing = await tryConnectExisting(debugPort, log)
+    if (existing) {
+      log.info('已连接到当前运行的 Chrome 浏览器')
+      const page = await createConfiguredPage(existing, log)
+      return { browser: existing, page, isNewLaunch: false }
+    }
+    if (attempt < maxRetries) {
+      log.info(`连接未成功，等待 3s 后重试 (${attempt}/${maxRetries})...`)
+      await new Promise(r => setTimeout(r, 3000))
+    }
   }
 
-  // 第二步：Chrome 未运行或未开启调试端口 → 自动启动
+  // 全部重试失败 → 自动启动
   log.info('未检测到可连接的 Chrome，正在启动...')
   const browser = await launchChromeWithDebug(debugPort, log)
   const page = await createConfiguredPage(browser, log)
@@ -88,22 +92,40 @@ async function createConfiguredPage(browser, log) {
   page.setDefaultTimeout(elementTimeout)
   page.setDefaultNavigationTimeout(navTimeout)
 
-  // 视口随机化
-  if (cfg('stealth.random_viewport', true)) {
-    const w = Math.floor(gaussianRandom(
-      cfg('stealth.viewport_width_min', 1200),
-      cfg('stealth.viewport_width_max', 1920)
-    ))
-    const h = Math.floor(gaussianRandom(
-      cfg('stealth.viewport_height_min', 800),
-      cfg('stealth.viewport_height_max', 1080)
-    ))
-    await page.setViewport({ width: w, height: h })
-    log.debug(`视口大小: ${w}x${h}`)
+  // ── 精准反检测补丁（替代 puppeteer-extra-plugin-stealth）──
+  // 只做最小必要修改，不注入大量脚本，避免破坏 SPA 渲染
+  if (cfg('stealth.patches_enabled', true)) {
+    await page.evaluateOnNewDocument(() => {
+      // 1. navigator.webdriver = false（最关键的检测点）
+      Object.defineProperty(navigator, 'webdriver', { get: () => false })
+
+      // 2. chrome.runtime 存在性（真实 Chrome 有此对象）
+      if (!window.chrome) window.chrome = {}
+      if (!window.chrome.runtime) {
+        window.chrome.runtime = { connect: () => {}, sendMessage: () => {} }
+      }
+
+      // 3. plugins 数组不为空（Headless Chrome 的 plugins.length === 0）
+      if (navigator.plugins.length === 0) {
+        Object.defineProperty(navigator, 'plugins', {
+          get: () => [
+            { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+            { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '' },
+            { name: 'Native Client', filename: 'internal-nacl-plugin', description: '' }
+          ]
+        })
+      }
+
+      // 4. languages 一致性
+      if (!navigator.languages || navigator.languages.length === 0) {
+        Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN', 'zh', 'en'] })
+      }
+    })
+    log.debug('精准反检测补丁已注入（navigator.webdriver, chrome.runtime, plugins, languages）')
   }
 
-  // WebRTC 防泄露
-  if (cfg('stealth.disable_webrtc', true)) {
+  // WebRTC 防泄露（默认关闭，真实用户的浏览器有 WebRTC）
+  if (cfg('stealth.disable_webrtc', false)) {
     await page.evaluateOnNewDocument(() => {
       Object.defineProperty(navigator, 'mediaDevices', {
         get: () => ({ getUserMedia: () => Promise.reject(new Error('blocked')) })
@@ -122,7 +144,7 @@ async function createConfiguredPage(browser, log) {
  */
 async function tryConnectExisting(debugPort, log) {
   try {
-    const resp = await fetch(`http://127.0.0.1:${debugPort}/json/version`)
+    const resp = await fetch(`http://127.0.0.1:${debugPort}/json/version`, { signal: AbortSignal.timeout(5000) })
     if (!resp.ok) return null
 
     const data = await resp.json()
@@ -130,12 +152,55 @@ async function tryConnectExisting(debugPort, log) {
     if (!wsUrl) return null
 
     log.debug(`发现 Chrome 调试端口 ws: ${wsUrl}`)
-    const browser = await puppeteer.connect({
-      browserWSEndpoint: wsUrl,
-      defaultViewport: null
-    })
+    // 带超时的连接（防止僵死 WebSocket 导致永久挂起）
+    const connectTimeout = cfg('browser.connect_timeout', 15000)
+    try {
+      const browser = await Promise.race([
+        puppeteer.connect({
+          browserWSEndpoint: wsUrl,
+          defaultViewport: null
+        }),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Chrome browser WebSocket 连接超时')), connectTimeout)
+        )
+      ])
+      return browser
+    } catch (wsErr) {
+      log.warn(`browser 级 WebSocket 超时(${wsErr.message})，尝试 page 级连接...`)
+      // 降级：通过 page 级 WebSocket 拿到 browser 对象
+      return await tryConnectViaPage(debugPort, connectTimeout, log)
+    }
+  } catch (e) {
+    log.warn?.(`连接已有 Chrome 失败: ${e.message}`)
+    return null
+  }
+}
+
+/**
+ * 降级方案：当 browser WebSocket 被僵死连接占用时，
+ * 通过 /json 接口获取 page 级 WebSocket URL，
+ * 用 CDP 协议直接连接页面再取 browser 对象
+ */
+async function tryConnectViaPage(debugPort, timeout, log) {
+  try {
+    const resp = await fetch(`http://127.0.0.1:${debugPort}/json`, { signal: AbortSignal.timeout(5000) })
+    const targets = await resp.json()
+    const pageTarget = targets.find(t => t.type === 'page' && t.webSocketDebuggerUrl)
+    if (!pageTarget) return null
+
+    log.debug(`page 级 ws: ${pageTarget.webSocketDebuggerUrl}`)
+    const browser = await Promise.race([
+      puppeteer.connect({
+        browserWSEndpoint: pageTarget.webSocketDebuggerUrl,
+        defaultViewport: null
+      }),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Chrome page WebSocket 连接超时')), timeout)
+      )
+    ])
     return browser
-  } catch {
+  } catch (e) {
+    log.warn?.(`page 级连接也失败: ${e.message}`)
     return null
   }
 }
@@ -287,6 +352,13 @@ export async function disconnectBrowser(browser) {
   const log = getLogger()
   try {
     if (browser) {
+      // 强制关闭底层 WebSocket，确保 Chrome 立即释放连接 slot
+      try {
+        const ws = browser._connection?._transport?._ws
+        if (ws && ws.readyState <= 1) { // CONNECTING or OPEN
+          ws.close()
+        }
+      } catch { /* ignore internal access errors */ }
       browser.disconnect()
       log.info('已断开与 Chrome 的连接（浏览器保持运行）')
     }

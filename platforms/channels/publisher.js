@@ -35,25 +35,43 @@ export class ChannelsAdapter extends BasePlatformAdapter {
     if (this._dryRun) this.log.info('[dryRun] 审核模式：填写内容后不点击发表按钮')
 
     try {
+      await this.showStatus('正在预热浏览...').catch(() => {})
+      await this.warmupBrowse()
+
+      await this.showStatus('正在打开发布页面...').catch(() => {})
       await this.step1_openPublishPage()
 
       if (post.video) {
+        await this.showStatus('正在上传视频...').catch(() => {})
         await this.step2_uploadVideo(post.video)
       } else if (post.images && post.images.length > 0) {
+        await this.showStatus('正在上传图片...').catch(() => {})
         await this.step2_uploadImages(post.images)
       }
 
       if (post.title) {
+        await this.showStatus('正在输入标题...').catch(() => {})
         await this.step3_inputTitle(post.title)
       }
 
+      await this.showStatus('正在发布...').catch(() => {})
       await this.step4_publish()
+      await this.showStatus('发布完成！').catch(() => {})
+      await this.hideStatus().catch(() => {})
+
+      await this.fillRemainingTime()
+
+      if (!this._dryRun) {
+        this.log.info('[发布后] 返回首页浏览')
+        await this.navigateTo(this.getHomeUrl())
+      }
+      await this.postPublishBrowse()
 
       this.log.info('========== 视频号发布完成 ==========')
-      return { success: true, message: '视频号发布成功' }
+      return this.buildResult(true, '视频号发布成功')
     } catch (err) {
       this.log.error(`视频号发布失败: ${err.message}`)
-      return { success: false, message: err.message }
+      return this.buildResult(false, err)
     }
   }
 

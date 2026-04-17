@@ -1,7 +1,7 @@
 import { BasePlatformAdapter } from '../base.js'
 import { randomDelay, sleep, simulateBrowsing } from '../../core/human.js'
 import { cfg } from '../../core/config.js'
-import { PUBLISH_SELECTORS, INTERACT_SELECTORS } from './selectors.js'
+import { PUBLISH_SELECTORS, INTERACT_SELECTORS, BROWSE_SELECTORS } from './selectors.js'
 import path from 'path'
 
 /**
@@ -40,6 +40,7 @@ export class XiaohongshuAdapter extends BasePlatformAdapter {
   getHomeUrl() { return 'https://www.xiaohongshu.com/explore' }
   getLoginUrl() { return 'https://creator.xiaohongshu.com/login' }
   getInteractSelectors() { return INTERACT_SELECTORS }
+  getBrowsePostSelector() { return BROWSE_SELECTORS.feedItem }
 
   /**
    * 执行完整的发帖流程
@@ -54,26 +55,26 @@ export class XiaohongshuAdapter extends BasePlatformAdapter {
       // 发帖前预热浏览：先浏览首页 feed，建立自然行为链
       await this.warmupBrowse()
 
-      await this.step1_openPublishPage()
+      await this.runStep('openPublishPage', () => this.step1_openPublishPage())
 
       // 先上传图片 → 等待编辑器出现 → 再填标题/正文（顺序很重要）
       if (post.images && post.images.length > 0) {
-        await this.step2_uploadImages(post.images)
+        await this.runStep('uploadImages', () => this.step2_uploadImages(post.images))
       }
 
-      await this.step3_inputTitle(post.title)
-      await this.step4_inputContent(post.content)
+      await this.runStep('inputTitle', () => this.step3_inputTitle(post.title))
+      await this.runStep('inputContent', () => this.step4_inputContent(post.content))
 
       if (post.tags && post.tags.length > 0) {
-        await this.step5_addTags(post.tags)
+        await this.runStep('addTags', () => this.step5_addTags(post.tags))
       }
 
       // 内容类型声明（仅 AI 内容需要声明，正常原创内容跳过）
-      await this.step_declareOriginal(post)
+      await this.runStep('declareOriginal', () => this.step_declareOriginal(post))
 
       // 定时发布（如果提供了 scheduleTime）
       if (post.scheduleTime) {
-        await this.step_setScheduleTime(post.scheduleTime)
+        await this.runStep('setScheduleTime', () => this.step_setScheduleTime(post.scheduleTime))
       }
 
       // AI 视觉验证：发布前截图确认内容正确
@@ -90,21 +91,25 @@ export class XiaohongshuAdapter extends BasePlatformAdapter {
         this.log.warn(`[视觉验证] 内容验证未通过，但继续发布: ${verification.details}`)
       }
 
-      await this.step6_publish()
+      await this.runStep('publish', () => this.step6_publish())
 
       // 补足时间到目标总时长
       await this.fillRemainingTime()
 
-      // 发布后继续浏览（配置项: tab.post_publish_browse_min/max）
+      // 返回首页后继续浏览（dry-run 模式留在发布页供人工检查）
+      if (!this._dryRun) {
+        this.log.info('[发布后] 返回首页浏览')
+        await this.navigateTo(this.getHomeUrl())
+      }
       await this.postPublishBrowse()
 
       this.log.info('========== 小红书发帖成功 ==========')
-      return { success: true, message: '发布成功' }
+      return this.buildResult(true, '发布成功')
 
     } catch (err) {
       this.log.error(`小红书发帖失败: ${err.message}`)
       await this.conditionalScreenshot('xhs_error', 'error')
-      return { success: false, message: err.message }
+      return this.buildResult(false, err)
     }
   }
 
@@ -164,6 +169,12 @@ export class XiaohongshuAdapter extends BasePlatformAdapter {
       throw new Error('未登录或登录已过期，请先在浏览器中登录小红书创作者中心')
     }
 
+    // 等待上传区域就绪（小红书编辑器需先上传图片，标题/正文输入框才会出现）
+    await this.page.waitForSelector(
+      [SELECTORS.uploadInput, SELECTORS.uploadInputAlt, SELECTORS.uploadInputFallback].join(', '),
+      { timeout: 20000 }
+    ).catch(() => this.log.warn('[步骤1] 未检测到上传控件，继续尝试'))
+
     await this.conditionalScreenshot('xhs_step1_open', 'step')
     await this.browseForStep('open_page')
   }
@@ -191,10 +202,32 @@ export class XiaohongshuAdapter extends BasePlatformAdapter {
     for (let i = 0; i < pollMaxAttempts; i++) {
       const uploading = await this.page.$('.uploading, .progress')
       if (!uploading) break
+      this.log.debug(`图片处理中... (${i + 1}/${pollMaxAttempts})`)
       await sleep(pollInterval)
     }
 
-    this.log.info('图片上传完成')
+    // 硬确认：验证上传的图片实际出现在编辑器中
+    const uploadedCount = await this.page.evaluate(() => {
+      // 小红书上传后图片以缩略图或 img 元素呈现
+      const imgs = document.querySelectorAll(
+        '.image-item, .upload-item:not(.upload-input), [class*="image"] img, .preview-item, .c-image img'
+      )
+      return Array.from(imgs).filter(el => el.offsetParent !== null).length
+    })
+    if (uploadedCount >= imagePaths.length) {
+      this.log.info(`图片上传确认: ${uploadedCount}/${imagePaths.length} 张图片已就绪`)
+    } else if (uploadedCount > 0) {
+      this.log.warn(`图片上传部分成功: 期望 ${imagePaths.length} 张，实际 ${uploadedCount} 张`)
+    } else {
+      this.log.warn(`图片上传未确认: 未检测到已上传的图片元素，可能选择器需更新`)
+    }
+    // 图片上传后等待编辑器（标题+正文）就绪
+    await this.waitForEditorReady(
+      [SELECTORS.titleInput, SELECTORS.titleInputAlt, SELECTORS.titleInputFallback],
+      [SELECTORS.contentInput, SELECTORS.contentInputAlt, SELECTORS.contentInputFallback],
+      20000
+    )
+
     await this.conditionalScreenshot('xhs_step2_upload', 'step')
     await this.browseForStep('upload_images')
   }
@@ -210,6 +243,11 @@ export class XiaohongshuAdapter extends BasePlatformAdapter {
 
     // 标题是普通 <input>，keyboard.type 可靠
     await this.type(selector, title)
+    const titleOk = await this.assertInputValue(
+      [SELECTORS.titleInput, SELECTORS.titleInputAlt, SELECTORS.titleInputFallback],
+      title, '标题'
+    )
+    if (!titleOk) throw new Error('标题输入验证失败，内容可能未正确填入')
     await this.actionPause()
     await this.conditionalScreenshot('xhs_step3_title', 'step')
     await this.browseForStep('input_title')
@@ -227,6 +265,11 @@ export class XiaohongshuAdapter extends BasePlatformAdapter {
     // ⚠️ 正文是 Tiptap/ProseMirror 富文本编辑器（contenteditable div）
     // keyboard.type 对中文不可靠，必须用 CDP insertText
     await this.paste(selector, content)
+    const contentOk = await this.assertRichTextContent(
+      [SELECTORS.contentInput, SELECTORS.contentInputAlt, SELECTORS.contentInputFallback],
+      content, '正文'
+    )
+    if (!contentOk) throw new Error('正文输入验证失败，内容可能未正确填入')
     await this.actionPause()
     await this.conditionalScreenshot('xhs_step4_content', 'step')
     await this.browseForStep('input_content')
@@ -235,6 +278,8 @@ export class XiaohongshuAdapter extends BasePlatformAdapter {
   async step5_addTags(tags) {
     this.log.info(`[步骤5] 添加 ${tags.length} 个话题标签`)
 
+    const searchDelayMin = cfg('steps.add_tags.search_delay_min', 1000)
+    const searchDelayMax = cfg('steps.add_tags.search_delay_max', 2000)
     const selectDelayMin = cfg('steps.add_tags.select_delay_min', 2000)
     const selectDelayMax = cfg('steps.add_tags.select_delay_max', 4000)
 
@@ -248,8 +293,8 @@ export class XiaohongshuAdapter extends BasePlatformAdapter {
           this.log.warn(`  未找到话题按钮，跳过标签 "${tag}"`)
           continue
         }
-        await topicBtn.click()
-        await sleep(500)
+        await this.clickElement(topicBtn)
+        await randomDelay(searchDelayMin, searchDelayMax)
 
         // 2. 输入话题关键词（CDP insertText，不含 #）
         const cdp = await this.page.target().createCDPSession()
@@ -258,11 +303,12 @@ export class XiaohongshuAdapter extends BasePlatformAdapter {
         this.log.info(`  输入话题: #${tag}`)
         await randomDelay(selectDelayMin, selectDelayMax)
 
-        // 3. 点击建议下拉中的第一个匹配项
+        // 3. 点击建议下拉中的第一个匹配项（收窄选择器范围，避免全页扫描）
         const suggHandle = await this.page.evaluateHandle((tagText) => {
-          // 建议项可能是多种元素，找包含话题文本的可点击元素
+          // 精确选择器：小红书话题建议下拉的已知容器
           const allItems = Array.from(document.querySelectorAll(
-            '.tag-item, .topic-item, [class*="topic-list"] > *, [class*="suggest"] > *, [class*="dropdown"] > *'
+            '.tag-item, .topic-item, .item.is-selected, .topic-list .item, ' +
+            '[class*="topic-list"] > *, [class*="suggest"] li, [class*="dropdown"] li'
           )).filter(el => el.offsetParent !== null && el.textContent.includes('#'))
 
           // 优先精确匹配
@@ -272,20 +318,13 @@ export class XiaohongshuAdapter extends BasePlatformAdapter {
           // fallback: 第一个可见的带 # 的建议
           if (allItems.length > 0) return allItems[0]
 
-          // 最后 fallback: 任何含 tagText 且 cursor=pointer 的元素
-          return Array.from(document.querySelectorAll('*')).find(el => {
-            if (!el.offsetParent) return false
-            const r = el.getBoundingClientRect()
-            return el.textContent?.includes('#' + tagText)
-              && r.height > 20 && r.height < 60
-              && window.getComputedStyle(el).cursor === 'pointer'
-          }) || null
+          return null
         }, tag)
 
         const suggEl = suggHandle.asElement()
         if (suggEl) {
           const text = await this.page.evaluate(el => el.textContent.trim().substring(0, 30), suggEl)
-          await suggEl.click()
+          await this.clickElement(suggEl)
           this.log.info(`  选中话题: ${text}`)
         } else {
           // 无建议项时按 Enter 确认纯文本话题
@@ -417,8 +456,15 @@ export class XiaohongshuAdapter extends BasePlatformAdapter {
 
     this.log.info('已点击发布按钮')
 
-    // 等待发布结果
-    await randomDelay(waitAfterMin, waitAfterMax)
+    // 等待并验证发布结果
+    const publishResult = await this.waitForPublishResult({
+      successTexts: ['发布成功', '已发布', '笔记已发布'],
+      errorTexts: ['发布失败', '请重试', '网络错误', '内容违规', '审核'],
+      timeout: Math.max(waitAfterMax, 10000)
+    })
+    if (publishResult.status === 'error') {
+      throw new Error(`发布失败: ${publishResult.evidence}`)
+    }
 
     // 发布后截图
     await this.conditionalScreenshot('xhs_after_publish', 'after_publish')

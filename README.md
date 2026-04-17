@@ -18,6 +18,8 @@
 - **Connects to Your Running Chrome** — Attaches via debugging port to your existing browser session; operates in new tabs without interfering with your open pages
 - **Multi-Layer Anti-Detection** — See [Anti-Detection Architecture](#-anti-detection-architecture) below
 - **Human Behavior Simulation** — Bézier curve mouse trajectories (ghost-cursor), Gaussian-distributed random delays, typo→backspace correction, Chinese IME input simulation, thinking pauses, random scrolling
+- **🆕 Behavior Recorder** — Record your real mouse trajectories, typing rhythm, click patterns, and scroll habits; auto-extract statistical parameters to replace hardcoded defaults; see [Behavior Recorder](#-behavior-recorder) below
+- **🆕 Live Status Overlay** — Real-time floating status bar on the page during publishing (e.g., "Typing title...", "Uploading images..."); anti-detection design using Shadow DOM
 - **Ultra-Long Random Delays** — 30–60 minutes per post; 1–5 minutes of simulated browsing between each step; all timing parameters follow Gaussian distribution
 - **Non-Intrusive** — Controls the browser via CDP protocol internal events; never hijacks your physical mouse or keyboard
 - **Data Collection** — Periodically reads views, likes, comments, and bookmarks from published posts
@@ -197,6 +199,10 @@ zenoclaw/
 │   ├── server.js                 #   Express server
 │   ├── middleware/                #   Auth + rate limiting
 │   └── routes/                   #   7 route modules
+├── recorder/                     # Behavior recorder
+│   ├── inject.js                 #   Browser injection script
+│   ├── analyzer.js               #   Statistical analysis
+│   └── record-behavior.js        #   CLI entry point
 ├── sdk/                          # Node.js SDK
 ├── cli/                          # CLI tool
 ├── web/                          # Web dashboard (React)
@@ -222,8 +228,107 @@ Among open-source automation tools, ZenoClaw's anti-detection design covers mult
 | **Behavioral Rhythm** | 1–5 min random browsing between actions | `core/human.js` | Mimics "fill one field, browse around" human habit |
 | **Time Signature** | 30–60 min per post | `config: timing.*` | Avoids instant-completion bot signatures |
 | **CDP Protocol** | No physical mouse/keyboard usage | `core/human.js` | Browser-internal events; invisible at OS level |
+| **Behavior Recorder** | Real user behavior profiling | `recorder/` | Records your actual mouse/keyboard/scroll patterns; replaces hardcoded parameters with your personal Gaussian distributions |
+| **Status Overlay** | Closed Shadow DOM + random attribute | `core/status-overlay.js` | Live step indicator invisible to page JavaScript; auto-removed after publishing |
 
 > **Design Principle**: No single technique guarantees undetectability. ZenoClaw's strategy is multi-layer stacking so that the overall behavioral pattern statistically resembles a real human. All parameters are exposed in configuration, allowing users to fine-tune based on each platform's detection intensity.
+
+## 🎙 Behavior Recorder
+
+ZenoClaw includes a **behavior recorder** that captures your real interaction patterns and uses them to generate more human-like automation. Instead of relying on hardcoded random delays, the engine uses **your personal** mouse speed, typing rhythm, click patterns, and scroll habits.
+
+### How It Works
+
+```
+┌──────────┐     ┌──────────┐     ┌──────────────┐     ┌──────────┐
+│ 1. Record │ ──▶ │ 2. Analyze│ ──▶ │ 3. Profile    │ ──▶ │ 4. Apply  │
+│ (browser) │     │ (stats)  │     │ (JSON file)   │     │ (auto)   │
+└──────────┘     └──────────┘     └──────────────┘     └──────────┘
+```
+
+1. **Record** — Inject a recorder into your browser; browse naturally for 5–15 minutes
+2. **Analyze** — Extract statistical distributions (mean, std, percentiles) from raw events
+3. **Profile** — Save to `data/behavior-profile.json`
+4. **Apply** — On next run, all timing parameters automatically use your recorded profile
+
+### Step-by-Step Usage
+
+#### 1. Start Chrome with debugging port
+
+```bash
+# Windows
+chrome.exe --remote-debugging-port=9222
+
+# macOS
+/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --remote-debugging-port=9222
+```
+
+#### 2. Start the recorder
+
+```bash
+node recorder/record-behavior.js
+```
+
+The recorder will:
+- Connect to Chrome via port 9222
+- Inject the recording script into all open tabs
+- Show a **red flashing "🔴 Recording" badge** in the bottom-right corner of each injected page
+- Display a real-time event counter on the badge
+
+#### 3. Operate naturally
+
+Browse, click, type, scroll — do whatever you normally do on any website. **You don't need to use any specific site** — behavioral patterns generalize across websites.
+
+Recommended minimum recording:
+- **5 minutes** for basic profile (mouse + clicks only)
+- **10–15 minutes** for full profile (including typing rhythm and scroll patterns)
+- Type at least 50–100 characters in any input field for typing data
+
+#### 4. Stop recording and extract
+
+Press **Enter** in the terminal where the recorder is running, or use the emergency extraction tool:
+
+```bash
+node recorder/extract-now.js
+```
+
+Output example:
+```
+Total 4236 events
+
+💾 Saved: data/behavior-profile.json
+
+⌨️  Typing: 375ms ± 225ms, 642 keystrokes
+🖱️  Mouse speed: 1043 px/s ± 1546
+👆 Click hold: 109ms, 28 clicks total
+📜 Scroll: 106px, 118 scrolls total
+⏸️  Micro-pauses: 983ms (120x), Think: 4534ms (3x)
+```
+
+#### 5. Automatic integration
+
+**No additional configuration needed.** On the next `initConfig()` call, the engine automatically loads `data/behavior-profile.json` and overrides default parameters.
+
+Priority chain: **User YAML config** > **Recorded behavior profile** > **Hardcoded defaults**
+
+For example, if you never set `keyboard.delay_min` in your config YAML, it will use your recorded value (e.g., 181ms) instead of the hardcoded default (100ms).
+
+### What Gets Recorded
+
+| Category | Parameters | Example Values |
+|----------|-----------|---------------|
+| **Typing** | delay_min, delay_max, delay_mean, delay_std, long_pause_prob, backspace_rate | 181ms–548ms, mean 375ms |
+| **Mouse** | speed_mean/std, curvature, click_hold_mean/std | 1043 px/s ± 1546 |
+| **Scroll** | amount_mean/std, interval_mean/std | 106px ± 35 |
+| **Timing** | action_delay, think_delay, read_delay | 623ms–1183ms |
+
+### Privacy
+
+The recorder **never captures** the actual content you type, URLs you visit, or page content. It only records:
+- Event types and timestamps
+- Mouse coordinates
+- Key categories (`char`, `backspace`, `enter`, `space`, `arrow`, `other`)
+- Scroll distances
 
 ## Notes
 
