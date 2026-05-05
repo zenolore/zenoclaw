@@ -1,0 +1,27 @@
+[
+  {
+    "id": "post_001",
+    "platform": "xiaohongshu",
+    "title": "今天发现一个超好用的东西",
+    "content": "分享一下我最近发现的宝藏好物，真的超级推荐！\n\n用了之后感觉生活质量都提升了，价格也很合适。\n\n大家有兴趣的可以试试看～",
+    "images": [
+      "./content/images/post001_1.jpg",
+      "./content/images/post001_2.jpg"
+    ],
+    "tags": ["好物分享", "生活"],
+    "status": "pending",
+    "published_at": null
+  },
+  {
+    "id": "post_002",
+    "platform": "xiaohongshu",
+    "title": "周末探店记录",
+    "content": "上周末去了一家超赞的咖啡店，环境特别好，适合拍照。\n\n他们家的拿铁真的绝了，拉花也很好看。\n\n地址在评论区，推荐大家去打卡！",
+    "images": [
+      "./content/images/post002_1.jpg"
+    ],
+    "tags": ["探店", "咖啡"],
+    "status": "pending",
+    "published_at": null
+  }
+]

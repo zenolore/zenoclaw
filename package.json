@@ -1,0 +1,63 @@
+{
+  "name": "zenoclaw",
+  "version": "0.2.0",
+  "description": "ZenoClaw — Open-source intelligent browser automation engine | 开源智能浏览器自动化引擎",
+  "main": "core/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node core/index.js",
+    "api": "node api/server.js",
+    "dev": "node api/server.js --dev",
+    "cli": "node cli/index.js",
+    "test": "node core/test-browser.js",
+    "test:contract": "node --test tests/adapter-contract.test.js",
+    "test:e2e": "node tests/e2e-full-test.js",
+    "test:e2e:quick": "node tests/e2e-full-test.js --quick",
+    "test:e2e:noai": "node tests/e2e-full-test.js --no-ai",
+    "test:e2e:xhs": "node tests/e2e-full-test.js --platform xiaohongshu",
+    "test:prepare": "node tests/prepare-test.js",
+    "post:xhs": "node core/index.js --platform xiaohongshu --once",
+    "read:xhs": "node core/index.js --platform xiaohongshu --read",
+    "web": "cd web && npm run dev",
+    "setup": "mkdir -p data/stats data/analytics logs/screenshots && test -f data/posts.json || cp content/posts.example.json data/posts.json && test -f zenoclaw.config.yaml || cp zenoclaw.config.example.yaml zenoclaw.config.yaml && echo '✅ 初始化完成，请编辑 zenoclaw.config.yaml 配置 chrome_user_data'"
+  },
+  "keywords": [
+    "zenoclaw",
+    "quoly",
+    "browser-automation",
+    "rpa",
+    "anti-detection",
+    "social-media",
+    "puppeteer",
+    "human-simulation"
+  ],
+  "license": "MIT",
+  "author": "Zeno (https://zeno.babiku.xyz)",
+  "homepage": "https://github.com/zenolore/zenoclaw",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zenolore/zenoclaw.git"
+  },
+  "funding": {
+    "type": "custom",
+    "url": "https://zeno.babiku.xyz"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "express-rate-limit": "^7.1.5",
+    "ghost-cursor": "^1.3.0",
+    "helmet": "^7.1.0",
+    "js-yaml": "^4.1.0",
+    "node-cron": "^3.0.3",
+    "pinyin-pro": "^3.28.0",
+    "puppeteer-core": "^22.6.0",
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
+    "uuid": "^9.0.0",
+    "winston": "^3.11.0"
+  },
+  "bugs": {
+    "url": "https://github.com/zenolore/zenoclaw/issues"
+  }
+}

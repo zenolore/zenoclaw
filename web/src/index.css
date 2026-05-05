@@ -1,0 +1,19 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-zeno-dark text-gray-100 antialiased;
+  }
+  
+  ::-webkit-scrollbar {
+    width: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    @apply bg-zeno-dark;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-zeno-border rounded-full;
+  }
+}

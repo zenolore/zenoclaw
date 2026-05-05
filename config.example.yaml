@@ -1,0 +1,296 @@
+# ============================================================
+# Auto-Publisher 配置文件
+# 复制本文件为 config.yaml 并修改为你自己的配置
+# cp config.example.yaml config.yaml
+#
+# 完整 API 文档见 CONFIG_API.md
+# ============================================================
+
+# ============================================================
+# 1. 浏览器配置
+# ============================================================
+browser:
+  # --- 必填 ---
+  # 查找方法：Chrome 地址栏输入 chrome://version，找到「个人资料路径」，取其父目录
+  # Windows: "C:\\Users\\你的用户名\\AppData\\Local\\Google\\Chrome\\User Data"
+  # macOS:   "/Users/你的用户名/Library/Application Support/Google/Chrome"
+  chrome_user_data: ""
+  profile: "Default"                # Chrome Profile 名称
+
+  # --- 可选 ---
+  chrome_path: ""                   # Chrome 可执行文件路径（留空自动查找）
+  debug_port: 9222                  # 远程调试端口
+  startup_timeout: 30000            # Chrome 启动超时（毫秒）
+  navigation_timeout: 60000         # 页面导航超时（毫秒）
+  element_timeout: 30000            # 等待页面元素出现的超时（毫秒）
+
+# ============================================================
+# 2. 安全配置（必填）
+# ============================================================
+security:
+  # 加密密钥（必填！用于账号密码等敏感数据的 AES-256-GCM 加密）
+  # 建议使用 32 位以上随机字符串，可用命令生成：
+  #   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+  secret: ""
+
+# ============================================================
+# 3. 反检测配置
+# ============================================================
+stealth:
+  # --- 视口随机化 ---
+  # 每次启动使用略微不同的窗口大小，避免指纹一致
+  random_viewport: true
+  viewport_width_min: 1200
+  viewport_width_max: 1920
+  viewport_height_min: 800
+  viewport_height_max: 1080
+
+  # --- WebRTC ---
+  disable_webrtc: true              # 防止 WebRTC 泄露真实 IP
+
+  # --- 其他 ---
+  # stealth 插件自动处理以下项，通常不需要修改：
+  # navigator.webdriver, window.chrome, plugin list, CDP stack traces
+
+# ============================================================
+# 3. 标签页行为
+# ============================================================
+tab:
+  # 操作完成后是否关闭标签页
+  close_after_operation: true
+
+  # 关闭标签页前的延迟（模拟人看了一会儿再关）
+  close_delay_min: 3000             # 最短延迟（毫秒）
+  close_delay_max: 15000            # 最长延迟（毫秒）
+
+  # 发布成功后，在页面上继续浏览多久再关闭（秒）
+  post_publish_browse_min: 30       # 最短（秒）
+  post_publish_browse_max: 120      # 最长（秒）
+
+# ============================================================
+# 4. 鼠标行为模拟
+# ============================================================
+mouse:
+  # --- 点击行为 ---
+  click_offset_percent: 10          # 点击位置在元素内的随机偏移百分比（0=正中心，越大越随机）
+  click_wait_min: 50                # 鼠标到达目标后，按下前的最短等待（毫秒）
+  click_wait_max: 200               # 鼠标到达目标后，按下前的最长等待（毫秒）
+
+  # --- 移动行为 ---
+  move_offset_percent: 15           # 鼠标移动到元素时的偏移百分比
+  move_area_margin: 0.1             # 随机移动时，距离页面边缘的安全边距（0.1 = 10%）
+
+  # --- 移动速度 ---
+  # ghost-cursor 使用贝塞尔曲线自动计算，以下控制额外的速度因子
+  move_speed: 1.0                   # 鼠标移动速度因子（1.0=默认，<1 更慢，>1 更快）
+
+# ============================================================
+# 5. 键盘行为模拟
+# ============================================================
+keyboard:
+  # --- 基础打字速度 ---
+  delay_min: 100                    # 每个字符之间最小延迟（毫秒）
+  delay_max: 300                    # 每个字符之间最大延迟（毫秒）
+
+  # --- 思考停顿 ---
+  pause_chance: 0.1                 # 打字途中随机暂停的概率（0.1 = 10%）
+  pause_min: 2000                   # 暂停最短时间（毫秒）
+  pause_max: 5000                   # 暂停最长时间（毫秒）
+
+  # --- 看屏幕停顿 ---
+  look_interval_min: 10             # 每隔多少字符触发一次「看屏幕」
+  look_interval_max: 20
+  look_delay_min: 500               # 「看屏幕」停顿时间（毫秒）
+  look_delay_max: 1500
+
+  # --- 换行延迟 ---
+  enter_delay_factor: 2.0           # 按回车后的延迟倍数（相对于普通字符延迟）
+
+  # --- 打字前点击延迟 ---
+  pre_type_delay_min: 300           # 点击输入框后，开始打字前的最短等待（毫秒）
+  pre_type_delay_max: 800
+
+  # --- 打错字模拟 ---
+  typo_enabled: false               # 是否启用打错字模拟
+  typo_chance: 0.02                 # 每个字符打错的概率（0.02 = 2%）
+  typo_correct_delay_min: 300       # 发现打错后，按退格键前的等待（毫秒）
+  typo_correct_delay_max: 1000
+  typo_backspace_delay_min: 50      # 退格键延迟下限（毫秒）
+  typo_backspace_delay_max: 150     # 退格键延迟上限（毫秒）
+
+  # --- 中文 IME 输入模拟 ---
+  ime_enabled: true                 # 是否启用 IME composition 事件模拟
+  ime_key_delay_min: 50             # 拼音字母间延迟下限（毫秒）
+  ime_key_delay_max: 150            # 拼音字母间延迟上限（毫秒）
+  ime_select_delay_min: 200         # 选词延迟下限（毫秒，模拟看候选词）
+  ime_select_delay_max: 800         # 选词延迟上限（毫秒）
+
+  # --- 长文自适应输入策略 ---
+  # 根据内容长度自动切换输入模式，避免长文章超时：
+  #   短文 (<ime_threshold_short): 全 IME 模拟（最像真人）
+  #   中文 (short~long): 混合模式（前N段 IME，其余快速输入）
+  #   长文 (>ime_threshold_long): 分句快速输入 + 段间停顿
+  ime_threshold_short: 200          # 短文阈值（字符数，低于此值全 IME 模拟）
+  ime_threshold_long: 800           # 长文阈值（字符数，高于此值全快速输入）
+  ime_paragraph_limit: 3            # 混合模式中使用 IME 的前N段
+
+# ============================================================
+# 6. 滚动行为模拟
+# ============================================================
+scroll:
+  times_min: 2                      # 每次调用滚动的最少次数
+  times_max: 6                      # 每次调用滚动的最多次数
+  distance_min: 100                 # 单次滚动最小距离（像素）
+  distance_max: 500                 # 单次滚动最大距离（像素）
+  down_bias: 0.7                    # 向下滚动的概率（0.7 = 70% 向下，30% 向上）
+  pause_min: 800                    # 每次滚动后的最短停顿（毫秒）
+  pause_max: 2500                   # 每次滚动后的最长停顿（毫秒）
+
+# ============================================================
+# 7. 模拟浏览行为（填充空闲时间）
+# ============================================================
+browse:
+  # 各行为的概率（总和应为 1.0）
+  mouse_move_chance: 0.3            # 随机移动鼠标
+  scroll_chance: 0.3                # 随机滚动
+  idle_chance: 0.4                  # 什么都不做（真人最常见）
+
+  scroll_distance_min: 50           # 浏览时滚动的最小距离
+  scroll_distance_max: 300          # 浏览时滚动的最大距离
+
+  action_interval_min: 2000         # 每个浏览动作之间的最短间隔（毫秒）
+  action_interval_max: 8000         # 每个浏览动作之间的最长间隔（毫秒）
+
+# ============================================================
+# 8. 操作间隔与总时长
+# ============================================================
+timing:
+  # --- 步骤间隔 ---
+  action_delay_min: 3000            # 两个操作步骤之间的最短间隔（毫秒）
+  action_delay_max: 15000           # 两个操作步骤之间的最长间隔（毫秒）
+
+  # --- 页面加载后延迟 ---
+  post_navigation_delay_min: 2000   # 页面加载完成后，开始操作前的最短等待（毫秒）
+  post_navigation_delay_max: 4000
+
+  # --- 发帖前预热浏览（模拟真人先浏览再发帖） ---
+  warmup_browse_enabled: true       # 是否启用发帖前预热浏览
+  warmup_browse_min: 300            # 预热浏览最短时间（秒）= 5 分钟
+  warmup_browse_max: 900            # 预热浏览最长时间（秒）= 15 分钟
+
+  # --- 单次发帖总时长目标 ---
+  total_duration_min: 1800          # 最短总时长（秒）= 30 分钟
+  total_duration_max: 3600          # 最长总时长（秒）= 60 分钟
+
+# ============================================================
+# 9. 文件上传
+# ============================================================
+upload:
+  wait_after_select_min: 2000       # 选择文件后的最短等待（毫秒）
+  wait_after_select_max: 5000
+  processing_poll_interval: 5000    # 轮询上传状态的间隔（毫秒）
+  processing_poll_max_attempts: 12  # 最大轮询次数（超过则认为上传完成）
+
+# ============================================================
+# 10. 截图策略
+# ============================================================
+screenshot:
+  on_each_step: false               # 是否在每个步骤都截图（调试用）
+  on_error: true                    # 出错时截图
+  on_before_publish: true           # 点击发布前截图
+  on_after_publish: true            # 发布后截图
+  full_page: false                  # 是否截取整个页面（false = 仅可见区域）
+  save_dir: "./logs/screenshots"    # 截图保存目录
+
+# ============================================================
+# 11. 各发帖步骤的浏览时间（秒）
+#     每个步骤完成后模拟浏览页面的时间范围
+# ============================================================
+steps:
+  open_page:
+    browse_min: 60                  # 打开发帖页面后浏览 1-3 分钟
+    browse_max: 180
+  upload_images:
+    browse_min: 120                 # 上传图片后浏览 2-5 分钟
+    browse_max: 300
+  input_title:
+    browse_min: 60                  # 输入标题后浏览 1-3 分钟
+    browse_max: 180
+  input_content:
+    browse_min: 120                 # 输入正文后浏览 2-5 分钟
+    browse_max: 300
+  add_tags:
+    browse_min: 60                  # 添加标签后浏览 1-2 分钟
+    browse_max: 120
+    search_delay_min: 1000          # 点击添加话题后等待（毫秒）
+    search_delay_max: 2000
+    select_delay_min: 2000          # 输入话题关键词后等待（毫秒）
+    select_delay_max: 4000
+  publish:
+    review_delay_min: 3000          # 点击发布前的审查等待（毫秒）
+    review_delay_max: 8000
+    wait_after_min: 5000            # 点击发布后等待结果（毫秒）
+    wait_after_max: 15000
+
+# ============================================================
+# 12. AI 视觉验证（发布前截图校验）
+# ============================================================
+vision:
+  enabled: false                    # 是否启用发布前视觉验证（需配置 API Key）
+  api_key: ""                       # 视觉模型 API Key（也可通过 VISION_API_KEY 环境变量设置）
+  base_url: "https://open.bigmodel.cn/api/paas/v4/chat/completions"  # OpenAI 兼容格式
+  model: "glm-4v-flash"            # 视觉模型名称（支持 GLM-4V / GPT-4V / Qwen-VL 等）
+  timeout: 30000                    # API 请求超时（毫秒）
+
+# ============================================================
+# 13. 重试策略（编号已修正）
+# ============================================================
+retry:
+  enabled: true                     # 发帖失败是否重试
+  max_attempts: 2                   # 最大重试次数
+  delay_min: 60000                  # 重试前最短等待（毫秒）= 1 分钟
+  delay_max: 300000                 # 重试前最长等待（毫秒）= 5 分钟
+
+# ============================================================
+# 14. 定时发帖任务
+# ============================================================
+schedule:
+  - platform: "xiaohongshu"
+    cron: "0 8 * * *"              # 每天 08:00
+    content_file: "./content/posts.json"
+    enabled: true
+
+  - platform: "weibo"
+    cron: "0 12 * * *"
+    content_file: "./content/posts.json"
+    enabled: false
+
+# ============================================================
+# 15. 定时数据读取任务
+# ============================================================
+read_schedule:
+  - platform: "xiaohongshu"
+    cron: "*/30 * * * *"           # 每 30 分钟
+    content_file: "./content/posts.json"
+    enabled: true
+
+# ============================================================
+# 16. 浏览/养号定时任务
+# ============================================================
+browse_schedule:
+  - platform: "xiaohongshu"
+    cron: "0 10 * * *"              # 每天 10:00
+    duration_min: 15                  # 浏览时长（分钟）
+    enabled: false
+
+  - platform: "weibo"
+    cron: "0 14 * * *"
+    duration_min: 20
+    enabled: false
+
+# ============================================================
+# 17. 日志
+# ============================================================
+log:
+  level: "info"                     # debug / info / warn / error
+  file: "./logs/auto-publisher.log"

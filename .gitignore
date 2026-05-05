@@ -1,0 +1,119 @@
+# ============================================================
+# Zenoclaw-Evo .gitignore
+# 保持开源仓库干净：测试产物 / 日志 / 用户数据 / 敏感信息不入仓
+# ============================================================
+
+# -------- Node --------
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-store/
+
+# -------- 敏感配置 --------
+.env
+.env.local
+.env.*.local
+!.env.example
+config.local.yaml
+zenoclaw.config.local.yaml
+# 真实业务配置（用户应从 .example 复制修改）
+zenoclaw.config.yaml
+
+# -------- 运行时产物（核心） --------
+logs/
+sdk/logs/
+midscene_run/
+*.log
+
+# -------- 数据目录 data/ --------
+# 所有 probe/dryrun/diag/test 的中间产物，不入仓
+data/*
+# 但保留用户需要的基础数据文件（如有）
+!data/.gitkeep
+!data/README.md
+# 注意：behavior-profile.json / posts.json 如果是用户数据也应 ignore
+# 用户若要分享默认画像，请放到 data/examples/ 下
+!data/examples/
+data/examples/*.local.*
+
+# -------- 截图 / 图片产物 --------
+screenshots/
+*.screenshot.png
+*.screenshot.jpg
+# data/ 下任何图片都不入仓
+data/**/*.png
+data/**/*.jpg
+data/**/*.jpeg
+data/**/*.gif
+data/**/*.webp
+
+# -------- 临时/清理产物 --------
+*.tmp
+*.temp
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# -------- IDE --------
+.vscode/
+.idea/
+*.iml
+.cursor/
+# windsurf 个人工作流建议不入仓（按需调整）
+.windsurf/
+.github-staging/
+
+# -------- 测试/覆盖率产物 --------
+coverage/
+.nyc_output/
+*.lcov
+
+# -------- Playwright / Puppeteer --------
+playwright-report/
+playwright/.cache/
+test-results/
+
+# -------- 私有文档（内部策略/架构/审计/计划，勿公开） --------
+INTERNAL_TECH_DOC.md
+CONFIG_API.md
+ZENOAGENT_ARCHITECTURE.md
+DEPLOY_GUIDE.md
+PROJECT_PLAN.md
+REPORT_AUDIT.md
+E2E_TEST_REPORT.md
+NEW_PLATFORMS_TEST_REPORT.md
+MARKET_GAP_ANALYSIS*.md
+ZENOCLAW_EVO_EXECUTION_CHECKLIST.md
+ZENOCLAW_EVO_PLAN_AUTHORITY_AUDIT.md
+ZENOCLAW_EVO_UPGRADE_PLAN.md
+CHANGELOG.md
+docs/
+
+# -------- 测试目录（含平台 token / 内部逻辑） --------
+tests/
+
+# -------- 脚本目录（内部调试/探测/测试/发布脚本，勿公开） --------
+scripts/
+.github-publish.json
+
+# -------- 构建产物 --------
+dist/
+build/
+out/
+.next/
+.nuxt/
+
+# -------- 锁文件策略 --------
+# package-lock.json 保留（推荐），yarn.lock / pnpm-lock 忽略（按团队约定）
+# 如果选择 yarn，反向操作
+# -------- 回收站（本项目自定义） --------
+# cleanup 脚本会把清理的文件备份到项目外 ../zenoclaw-evo-trash-*
+# 但若误放本仓库内，也兜底忽略
+_trash/
+_trash-*/
+data/_trash/
+data/_trash-*/

@@ -1,0 +1,333 @@
+# ============================================================
+# ZenoClaw 配置文件
+# 复制本文件为 zenoclaw.config.yaml 并修改为你自己的配置
+# cp zenoclaw.config.example.yaml zenoclaw.config.yaml
+# ============================================================
+
+# ============================================================
+# 1. API 服务配置
+# ============================================================
+api:
+  port: 3200                          # API 监听端口
+  host: "0.0.0.0"                     # 监听地址（0.0.0.0 = 所有网卡）
+  key: ""                             # API Key（留空 = 不需要鉴权）
+  auth_enabled: true                  # 是否启用鉴权
+  cors_origin: "*"                    # CORS 允许的来源
+  rate_limit_window: 60000            # 限流窗口（毫秒）
+  rate_limit_max: 60                  # 窗口内最大请求数
+
+# ============================================================
+# 2. 插件配置
+# ============================================================
+plugins:
+  content_provider: "default"         # 内容提供者：default / 自定义路径
+  content_file: "./data/posts.json"   # 默认内容文件路径
+  captcha_solver: "manual"            # 验证码处理：manual / 自定义
+  captcha_options:
+    waitTimeout: 120000               # 手动验证等待超时（毫秒）
+  analytics_engine: "default"         # 分析引擎：default / 自定义
+  stats_dir: "./data/stats"           # 统计数据目录
+  notifier: "console"                 # 通知方式：console / webhook
+  notifier_options:
+    url: ""                           # Webhook URL（notifier=webhook 时必填）
+
+# ============================================================
+# 3. 浏览器配置
+# ============================================================
+browser:
+  chrome_user_data: ""
+  profile: "Default"
+  chrome_path: ""
+  debug_port: 9222
+  startup_timeout: 30000
+  navigation_timeout: 60000
+  element_timeout: 30000
+
+# ============================================================
+# 4. 安全配置（必填）
+# ============================================================
+security:
+  # 加密密钥（必填！用于账号密码等敏感数据的 AES-256-GCM 加密）
+  # 建议使用 32 位以上随机字符串，可用命令生成：
+  #   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+  secret: ""
+
+# ============================================================
+# 5. 反检测配置
+# ============================================================
+stealth:
+  random_viewport: true
+  viewport_width_min: 1200
+  viewport_width_max: 1920
+  viewport_height_min: 800
+  viewport_height_max: 1080
+  disable_webrtc: true
+
+# ============================================================
+# 5. 标签页行为
+# ============================================================
+tab:
+  close_after_operation: true
+  close_delay_min: 3000
+  close_delay_max: 15000
+  post_publish_browse_min: 30
+  post_publish_browse_max: 120
+
+# ============================================================
+# 6. 鼠标行为模拟
+# ============================================================
+mouse:
+  click_offset_percent: 10
+  click_wait_min: 50
+  click_wait_max: 200
+  move_offset_percent: 15
+  move_area_margin: 0.1
+  move_speed: 1.0
+
+# ============================================================
+# 7. 键盘行为模拟
+# ============================================================
+keyboard:
+  delay_min: 100
+  delay_max: 300
+  pause_chance: 0.1
+  pause_min: 2000
+  pause_max: 5000
+  look_interval_min: 10
+  look_interval_max: 20
+  look_delay_min: 500
+  look_delay_max: 1500
+  enter_delay_factor: 2.0
+  pre_type_delay_min: 300
+  pre_type_delay_max: 800
+  typo_enabled: false
+  typo_chance: 0.02
+
+# ============================================================
+# 8. 滚动行为模拟
+# ============================================================
+scroll:
+  times_min: 2
+  times_max: 6
+  distance_min: 100
+  distance_max: 500
+  down_bias: 0.7
+  pause_min: 800
+  pause_max: 2500
+
+# ============================================================
+# 9. 模拟浏览行为
+# ============================================================
+browse:
+  mouse_move_chance: 0.3
+  scroll_chance: 0.3
+  idle_chance: 0.4
+  scroll_distance_min: 50
+  scroll_distance_max: 300
+  action_interval_min: 2000
+  action_interval_max: 8000
+
+# ============================================================
+# 10. 操作间隔与总时长
+# ============================================================
+timing:
+  action_delay_min: 3000
+  action_delay_max: 15000
+  post_navigation_delay_min: 2000
+  post_navigation_delay_max: 4000
+  total_duration_min: 1800
+  total_duration_max: 3600
+
+# ============================================================
+# 11. 文件上传
+# ============================================================
+upload:
+  wait_after_select_min: 2000
+  wait_after_select_max: 5000
+  processing_poll_interval: 5000
+  processing_poll_max_attempts: 12
+
+# ============================================================
+# 12. 截图策略
+# ============================================================
+screenshot:
+  on_each_step: false
+  on_error: true
+  on_before_publish: true
+  on_after_publish: true
+  full_page: false
+  save_dir: "./logs/screenshots"
+
+# ============================================================
+# 13. 各发帖步骤的浏览时间（秒）
+# ============================================================
+steps:
+  open_page:
+    browse_min: 60
+    browse_max: 180
+  upload_images:
+    browse_min: 120
+    browse_max: 300
+  input_title:
+    browse_min: 60
+    browse_max: 180
+  input_content:
+    browse_min: 120
+    browse_max: 300
+  add_tags:
+    browse_min: 60
+    browse_max: 120
+    search_delay_min: 1000
+    search_delay_max: 2000
+    select_delay_min: 2000
+    select_delay_max: 4000
+  publish:
+    review_delay_min: 3000
+    review_delay_max: 8000
+    wait_after_min: 5000
+    wait_after_max: 15000
+
+# ============================================================
+# 14. 重试策略
+# ============================================================
+retry:
+  enabled: true
+  max_attempts: 2
+  delay_min: 60000
+  delay_max: 300000
+
+# ============================================================
+# 15. 定时发帖任务
+# 支持平台: xiaohongshu / zhihu / jike / v2ex / x / reddit / sspai / producthunt
+# ============================================================
+schedule:
+  - platform: "xiaohongshu"
+    cron: "0 8 * * *"              # 每天 08:00
+    content_file: "./data/posts.json"
+    enabled: true
+  - platform: "zhihu"
+    cron: "0 10 * * 1,3,5"         # 周一三五 10:00
+    content_file: "./data/posts.json"
+    enabled: false
+  - platform: "jike"
+    cron: "0 12 * * *"             # 每天 12:00
+    content_file: "./data/posts.json"
+    enabled: false
+  # 其他平台按需添加，格式相同
+
+# ============================================================
+# 16. 定时数据读取任务
+# ============================================================
+read_schedule:
+  - platform: "xiaohongshu"
+    cron: "*/30 * * * *"           # 每 30 分钟
+    content_file: "./data/posts.json"
+    enabled: true
+  - platform: "zhihu"
+    cron: "0 */6 * * *"            # 每 6 小时
+    content_file: "./data/posts.json"
+    enabled: false
+
+# ============================================================
+# 17. 日志
+# ============================================================
+log:
+  level: "info"
+  file: "./logs/zenoclaw.log"
+
+# ============================================================
+# 18. Evo 自进化实验配置
+# ============================================================
+evolution:
+  enabled: false
+  mode: "off"                         # off / observe_only / shadow_verify / canary / active
+  dataDir: "./data/evolution"
+  logDir: "./logs/evolution"
+  runtime:
+    writeOnly: true
+    failOpen: true
+  evidence:
+    level: "L0"                       # L0=step 元数据，L1=失败截图/DOM，L2=深度诊断
+  features:
+    traceEnabled: false
+    evidenceEnabled: false
+    interruptionGuardEnabled: false
+    pageObserverEnabled: false
+    ruleMemoryEnabled: false
+    verifierEnabled: false
+    repairAgentEnabled: false
+    replayEnabled: false
+    canaryEnabled: false
+    promotionGateEnabled: false
+    manualReviewEnabled: false
+    rollbackEnabled: false
+    metricsEnabled: false
+    canaryResultEnabled: false
+  interruptionGuard:
+    beforeStepCheck: true
+    afterStepCheck: false
+    onErrorCheck: true
+    maxDomDismiss: 3
+    maxTutorialClicks: 5
+    visionOnUnknown: false
+    midsceneFallback: false
+    blockHighRiskActions: true
+  memory:
+    writeFailures: true
+    writeCandidateRules: true
+    writeStrategies: true
+    readRules: false
+    promoteRules: false
+    maxCandidateRules: 1000
+  verifier:
+    shadowOnly: true
+    blockOnFail: false
+    recordToTrace: true
+    recordToMemory: false
+    rulesByStep: {}
+  repair:
+    generateProposals: true
+    writeProposals: true
+    applyPatches: false
+    requireHumanReview: true
+    maxProposalsPerRun: 20
+  replay:
+    writeCases: true
+    writeResults: true
+    allowRealPlatforms: false
+    maxStepsPerCase: 50
+    timeoutMs: 30000
+  canary:
+    sampleRate: 0
+    deterministicSampling: true
+    blockHighRiskActions: true
+    highRiskActions: []
+    allowedPlatforms: []
+    blockedPlatforms: []
+    dryRunOnly: true
+  promotion:
+    writeDecisions: true
+    minReplayPasses: 3
+    maxReplayFailures: 0
+    requireManualReview: true
+    allowAutoPromote: false
+    targetStatus: candidate_verified
+  review:
+    writeReviews: true
+    requireReviewer: true
+    defaultPriority: normal
+    allowSelfApproval: false
+    applyReviewedChanges: false
+  rollback:
+    writePlans: true
+    executeAutomatically: false
+    requireHumanReview: true
+    backupBeforeRollback: true
+  metrics:
+    writeReports: true
+    aggregateOnly: true
+    changeExecutionPath: false
+  canaryResult:
+    writeResults: true
+    recordOnly: true
+    authorizeExecution: false

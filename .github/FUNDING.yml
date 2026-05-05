@@ -1,0 +1,5 @@
+# 这些链接会出现在 GitHub 仓库页面的 "Sponsor" 按钮中
+# https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/displaying-a-sponsor-button-in-your-repository
+
+custom:
+  - https://zeno.babiku.xyz
